@@ -236,7 +236,7 @@ smb_open(const char *path, int flags, mode_t mode)
  * Like read(2).
  * Possible errno values: any of smbc_read.
  */
-int
+ssize_t
 smb_read(int fh, void *buf, size_t bufsize)
 {
 	return smbc_read(fh, buf, bufsize);
@@ -247,7 +247,7 @@ smb_read(int fh, void *buf, size_t bufsize)
  * Like write(2).
  * Possible errno values: any of smbc_write.
  */
-int
+ssize_t
 smb_write(int fh, const void *buf, size_t bufsize)
 {
 
