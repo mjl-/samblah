@@ -747,7 +747,7 @@ makeprogress(const char *file, double ratio, off_t size)
 {
 	int totallen, filelen, barlen, sizelen;
 	int printdots;
-	int whitespace;
+	int space;
 	int starlen;
 	char *barp;
 	char barbuf[51];
@@ -829,7 +829,7 @@ makestring:
 	printdots = strlen(file) > filelen - 3;
 	if (printdots)
 		file += (strlen("...") + strlen(file) + 3) - filelen;
-	whitespace = totallen - sizelen - filelen + 2 - barlen;
+	space = totallen - sizelen - filelen + 2 - barlen;
 
 	assert(sizelen == 0 || sizelen == 9);
 	if (sizelen)
@@ -859,7 +859,7 @@ makestring:
 	}
 
 	(void)xsnprintf(progress, sizeof progress, "%s%s:%*s%s%*s",
-	    printdots ? "..." : "", file, whitespace, "", barbuf,
+	    printdots ? "..." : "", file, space, "", barbuf,
 	    sizelen, sizebuf);
 }
 
