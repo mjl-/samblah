@@ -1,0 +1,116 @@
+CODE LAYOUT
+====================
+
+Some notes about what to find where:
+
+Makefile    -  Contains the following targets: `all' (which depends
+on `samblah' and `samblah.1', for the binary and formatted manual
+page respectively), `clean' (which removes all files created during
+compilation/manual page generation), `lint' (which will call lint
+on the code to find common mistakes).  Target `samblah' depends on
+libegetopt.a and libsmbwrap.a which are made from egetopt.{c,h} and
+smbwrap.{c,h} respectively.
+
+alias.c     -  Handles adding and removing aliases with functions
+setalias and getalias.
+
+cmdls.c     -  The internal ls-command, complex enough to warrant
+being in a separate file.
+
+cmds.c      -  Large part of the code, all interactive commands,
+also most commands use help functions from smbhlp.c for things as
+listing shares/hosts/workgroups.
+
+complete.c  -  Handles completion, this includes generation of matches
+given a certain to-be-completed argument (either completing a command
+or completing a remote or local file), it also provides a function
+to print a list of matches.
+
+egetopt.{c,h}   -  An `extended' version of getopt, it is extended in the
+sense that it has an extra variable `eoptreset' with which the state
+of getopt can be reset.  With libc/POSIX getopt, this cannot be
+done in a portable manner.  The eoptreset idea comes from BSD, but
+this implementation was written from scratch.  This is build as a
+separate library since it is not samblah specific, with the separate
+header it can easily be used in other code.  libegetopt.a is made
+of getopt.{c,h}
+
+init.c      -  Parses command line options, and uses environment
+variables and the configuration file to initialize samblah.  Function
+do_init does all the work (on error, it exits samblah, on success
+it returns.
+
+interface.c -  Reads command lines typed by the user, parses them
+into tokens (command and arguments), and executes the command.
+
+main.c      -  Where execution starts, the only thing it does is:
+initialize the smbclient library, call do_init to initialize the
+state, call do_interface to process user input and exit when
+do_interface returns.
+
+misc.c      -  Functions used throughout the code, e.g. streql,
+xsnprintf.  Also contains an implementation of the BSD err/errx/warn/warnx
+functions (to make samblah more portable and not depend on every
+system having this extension).  It also includes cmdwarn and cmdwarnx,
+the warn/warnx variants to be used by the interactive commands (in
+cmds.c).  Needed for the mechanism to determine the command that
+wants to print the warning.
+
+parsecl.c   -  Functions for parsing a command line (i.e. `converting'
+lines into tokens (command and arguments)), also contains the code
+for (un)quoting.
+
+samblah.1   -  Manual page using the mdoc/doc macro set.
+
+samblah.h   -  Header file containing defines/declarations for most
+functions/variables used throughout samblah.  This file also handles
+all libc/POSIX includes for the .c files in samblah (except for
+egetopt.{c,h} and smbwrap.{c,h} which are considered `separate').
+This means samblah.h includes headers for all functions used somewhere
+in the code.  Thus, some .c files will include more headers than
+they need, I still think this is a good idea because it makes
+understanding the code much easier (and you do not keep forgetting
+including one of the many header files you need for the function
+you just used for the first time, and you will not have the same list
+of includes at the head of every file).
+
+smbglob.c   -  Handles generating matches for tokens with globbing
+characters.
+
+smbhlp.c    -  Many functions used by cmds.c, e.g. functions to
+list workgroups/hosts/shares on the network.
+
+smbwrap.c   -  Wrapper for the libsmbclient functions.  Libsmbclient
+works with URI's, in something that acts like a shell, you do not
+want to see URI's, you want to see paths.  Thus, smbwrap.c provides
+functions like smb_open, smb_read, smb_write, smb_close, and more
+of the standard I/O functions.  It also contains smb_connect and
+smb_disconnect to map the I/O functions to the a share.  libsmbwrap.a
+consists of smbwrap.c and smbwrap.h.
+
+smbwrap.h   -  Defines/declarations for smbwrap.c.
+
+transfer.c  -  Handles transferring files with functions as
+transfer_get and transfer_put.  Used by get, put and more.  Also
+contains functions for asking the user whether to resume/overwrite/skip,
+and for printing the progress.
+
+vars.c      -  Code for the interval variables, e.g. `pager', `showprogress'
+and `onexist'.  This includes functions for setting and retrieving values.
+
+
+VARIOUS NOTES
+====================
+
+Some notes about how things are done in the code.
+
+`int_signal'  -  The interactive commands (should) all check for
+the variable int_signal, for SIGINT, which is set to true by the
+interrupt signal handler in interface.c.  All I/O system calls
+should stop and not be called further since the user wants to stop
+the command as soon as possible, specially the smb_* calls, since
+they can easily block and not respond to SIGINT.  After an interactive
+command, int_signal is reset to false.
+
+
+$Id$
