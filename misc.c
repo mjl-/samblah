@@ -61,12 +61,12 @@ const char *
 makedatestr(time_t mtime)
 {
 	static char buf[13];
-	struct tm tmmtime;
+	struct tm *tmmtime;
 
-	(void)localtime_r(&mtime, &tmmtime);
+	tmmtime = localtime(&mtime);
 	assert(strftime(buf, sizeof buf,
 	    (time(NULL) - mtime > 365 * 24 * 3600) ?
-	    "%b %d  %Y" : "%b %d %H:%M", &tmmtime) != 0);
+	    "%b %d  %Y" : "%b %d %H:%M", tmmtime) != 0);
 
 	return buf;
 }

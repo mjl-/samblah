@@ -588,7 +588,7 @@ cmd_lumask(int argc, char **argv)
 		/* show current umask */
 		modetmp = umask(modeold), umask(modetmp);
 		modetmp &= S_IRWXU|S_IRWXG|S_IRWXO;
-		printf("%03o\n", modetmp);
+		printf("%03o\n", (int)modetmp);
 		break;
 	case 2:
 		/* set new umask */
