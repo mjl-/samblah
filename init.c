@@ -4,8 +4,6 @@
 
 static void             usage(void);
 static void             parse_config(const char *file, int use_file);
-static const char      *config_set_cmd(List *);
-static const char      *config_alias_cmd(List *);
 
 
 /*
@@ -22,7 +20,6 @@ do_init(int argc, char **argv)
 	int	use_samblahrc = 0;
 	char   *homedir;
 	char	passinput[SMB_PASS_MAXLEN + 1];
-	const Alias    *al;
 	const char     *errmsg;
 
 	if (getenv("PAGER") != NULL) {
@@ -34,7 +31,7 @@ do_init(int argc, char **argv)
 	carg = user = pass = host = share = path = NULL;
 	eoptind = 1;
 	eoptreset = 1;  /* clean egetopt state */
-	while ((ch = egetopt(argc, argv, "c:hp:Pu:")) != -1)
+	while ((ch = egetopt(argc, argv, "c:p:Pu:")) != -1)
 		switch(ch) {
 		case 'c':
 			carg = eoptarg;         /* config file */
@@ -50,21 +47,19 @@ do_init(int argc, char **argv)
 			break;
 		default:
 			usage();
-			exit(1);
 		}
 
+	argc -= eoptind;
+	argv += eoptind;
+
 	/* accepting no more than three arguments */
-	if (argc - eoptind > 3) {
+	if (argc > 3) {
 		warnx("too many arguments");
 		usage();
-		exit(1);
 	}
-
-	/* with an alias as argument, -u, -p and -P may not be used */
-	if ((argc - eoptind == 1) && (Popt || user != NULL || pass != NULL)) {
-		warnx("illegal combination of options");
+	if (argc == 1) {
+		warnx("missing share");
 		usage();
-		exit(1);
 	}
 
 	if (Popt) {
@@ -107,26 +102,12 @@ do_init(int argc, char **argv)
 			use_samblahrc = -1;     /* do not read config at all */
 	}
 
-	argc -= eoptind;
-	argv += eoptind;
-
 	/* parse file, on error a message printed exit called */
 	if (use_samblahrc >= 0)
 		parse_config(samblahrc, use_samblahrc);
 
 	if (argc == 0) {
 		return; /* we do not have to connect */
-	} else if (argc == 1) {
-		/* argument is an alias */
-		al = getalias(argv[0]);
-		if (al == NULL)
-			errx(1, "no such alias");
-
-		host = al->host;
-		share = al->share;
-		user = al->user;
-		pass = al->pass;
-		path = al->path;
 	} else {
 		/* arguments are host, share and possibly path */
 		host = argv[0];
@@ -145,8 +126,8 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-"usage: samblah [-c file] [alias]\n"
-"       samblah [-c file] [-u user] [-P | -p pass] host share [path]\n");
+"       samblah [-c file] [-u user] [-P | -p pass] [host share [path]]\n");
+	exit(1);
 }
 
 
@@ -193,11 +174,15 @@ parse_config(const char *file, int use_file)
 			errx(1, "tokenizing line: %s", errmsg);
 		}
 
-		errmsg = "unknown command";
-		if (list_count(tokens) >= 1 && streql((char *)list_elem(tokens, 0), "set"))
-			errmsg = config_set_cmd(tokens);
-		else if (list_count(tokens) >= 1 && streql((char *)list_elem(tokens, 0), "alias"))
-			errmsg = config_alias_cmd(tokens);
+		if (list_count(tokens) >= 1 &&
+		    streql((char *)list_elem(tokens, 0), "set")) {
+			if (list_count(tokens) != 3)
+				errmsg = "wrong number of arguments";
+			else
+				errmsg = setvariable(list_elem(tokens, 1), list_elem(tokens, 2));
+		} else {
+			errmsg = "unknown command";
+		}
 
 		list_free(tokens); tokens = NULL;
 
@@ -215,67 +200,4 @@ parse_config(const char *file, int use_file)
 
 	if (fclose(in) != 0)
 		err(1, "closing %s", file);
-}
-
-
-static const char *
-config_set_cmd(List *tokens)
-{
-	int	argc;
-	char  **argv;
-
-	argc = list_count(tokens);
-	argv = (char **)list_elems(tokens);
-
-	if (argc != 3)
-		return "wrong number of arguments";
-
-	return setvariable(argv[1], argv[2]);
-}
-
-
-static const char *
-config_alias_cmd(List *tokens)
-{
-	const char *user, *pass;
-	const char *alias, *host, *share, *path;
-	int	ch;
-	int	argc;
-	char  **argv;
-
-	argc = list_count(tokens);
-	argv = (char **)list_elems(tokens);
-
-	if (argc < 4)
-		return "wrong number of arguments";
-
-	alias = argv[1];
-
-	user = pass = NULL;
-	eoptind = 2;    /* skip keyword "alias" and alias itself */
-	eoptreset = 1;  /* clean egetopt state */
-	while ((ch = egetopt(argc, argv, ":p:u:")) != -1)
-		switch (ch) {
-		case 'p':
-			pass = eoptarg;
-			break;
-		case 'u':
-			user = eoptarg;
-			break;
-		case ':':
-		default:
-			return "illegal option or missing argument";
-		}
-	argc -= eoptind;
-	argv += eoptind;
-
-	/* still need host, share and possibly path */
-	if (argc != 2 && argc != 3)
-		return "wrong number of arguments";
-
-	host = argv[0];
-	share = argv[1];
-	path = argv[2];         /* when argv[1] is last arg, argv[2] is null */
-
-	return setalias(alias, user, pass, host, share, path);
 }

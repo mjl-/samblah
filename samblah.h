@@ -35,7 +35,6 @@
 
 enum {
 	SAMBLAHRC_LINE_MAXLEN   = 1024,   /* max length of line in samblahrc */
-	ALIAS_MAXLEN            =   64,   /* max length of an alias */
 	VAR_STRING_MAXLEN       =  512,   /* max length of a string variable */
 	FALLBACK_PATH_MAXLEN    = 1024,   /* to use when pathconf fails */
 	RESUME_ROLLBACK         = 8192    /* bytes to retransfer of file */
@@ -75,22 +74,6 @@ char   *getvariable(const char *);
 int	getvariable_bool(const char *);
 int	getvariable_onexist(const char *);
 char   *getvariable_string(const char *);
-
-
-/* aliases, alias.c */
-typedef struct Alias Alias;
-
-struct Alias {
-	char alias[ALIAS_MAXLEN + 1];
-	char user[SMB_USER_MAXLEN + 1];
-	char pass[SMB_PASS_MAXLEN + 1];
-	char host[SMB_HOST_MAXLEN + 1];
-	char share[SMB_SHARE_MAXLEN + 1];
-	char path[SMB_PATH_MAXLEN + 1];
-};
-
-const char     *setalias(const char *, const char *, const char *, const char *, const char *, const char *);
-const Alias    *getalias(const char *);
 
 
 /* initialization, init.c */

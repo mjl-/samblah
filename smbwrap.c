@@ -89,6 +89,7 @@ smb_connect(const char *host, const char *share, const char *user,
     const char *pass, const char *path)
 {
 	static char errbuf[SMB_ERRMSG_MAXLEN];
+	int	r;
 	const char *errmsg;
 
 	/* test if data is valid */
@@ -117,9 +118,10 @@ smb_connect(const char *host, const char *share, const char *user,
 	}
 
 	/* XXX use makeuri and friends for this */
-	assert(snprintf(errbuf, sizeof errbuf, "smb://%s/%s%s%s: %s", host,
+	r = snprintf(errbuf, sizeof errbuf, "smb://%s/%s%s%s: %s", host,
 	    share, (path == NULL) ? "" : ((*path == '/') ? "" : "/"),
-	    (path == NULL) ? "" : path, errmsg) != -1);
+	    (path == NULL) ? "" : path, errmsg);
+	assert(r != -1);
 
 	return errbuf;
 }
@@ -148,6 +150,7 @@ smb_chdir(const char *path)
 {
 	int dh;
 	int save_errno;
+	int r;
 
 	/* check if buffer is big enough */
 	if (strlen(path) > SMB_PATH_MAXLEN) {
@@ -164,7 +167,8 @@ smb_chdir(const char *path)
 	(void)smb_close(dh);
 
 	/* this will succeed since path will fit */
-	assert(evalpath(smb_path, path));
+	r = evalpath(smb_path, path);
+	assert(r);
 
 	errno = save_errno;
 	return 0;

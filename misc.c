@@ -69,7 +69,8 @@ xsnprintf(char *buf, size_t buflen, const char *fmt, ...)
 
 	/* LINTED [pointer casts may be troublesome] */
 	va_start(ap, fmt);
-	assert((ret = vsnprintf(buf, buflen, fmt, ap)) >= 0);
+	ret = vsnprintf(buf, buflen, fmt, ap);
+	assert(ret >= 0);
 	/* LINTED [expression has null effect] */
 	va_end(ap);
 

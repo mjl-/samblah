@@ -90,7 +90,7 @@ do_line(void)
 {
 	char   *line;
 	List   *tokens;
-	const char *prompt = "samblah> ";
+	char   *prompt = "samblah> ";
 	const char *errmsg;
 
 	/* possibly cleanup from previous command */

@@ -11,9 +11,6 @@ on the code to find common mistakes).  Target `samblah' depends on
 libegetopt.a and libsmbwrap.a which are made from egetopt.{c,h} and
 smbwrap.{c,h} respectively.
 
-alias.c     -  Handles adding and removing aliases with functions
-setalias and getalias.
-
 cmdls.c     -  The internal ls-command, complex enough to warrant
 being in a separate file.
 

@@ -114,10 +114,8 @@ Cmd	commands[] = {
       { "mv file1 file2", "mv file ... directory", NULL },
       { NULL } },
     { "open", cmd_open, CMD_MUSTNOTCONN,
-      "open connection to host or alias",
-      { "open [-u user] [-P | -p pass] host share [path]",
-        "open alias",
-        NULL },
+      "open connection to host",
+      { "open [-u user] [-P | -p pass] host share [path]", NULL },
       { "-p pass  login using given password",
         "-P       prompt for password",
         "-u user  login using given username",
@@ -647,7 +645,6 @@ cmd_open(int argc, char **argv)
 	char	passinput[SMB_PASS_MAXLEN + 1];
 	const char     *host, *share, *user = NULL, *pass = NULL, *path = NULL;
 	const char     *errmsg;
-	const Alias    *al;
 
 	eoptind = 1;
 	eoptreset = 1;  /* clean egetopt state */
@@ -670,8 +667,13 @@ cmd_open(int argc, char **argv)
 	argc -= eoptind;
 	argv += eoptind;
 
-	if (argc < 1 || argc > 3) {
-		cmdwarnx("expecting either an alias or a host and share");
+	if (argc == 1) {
+		cmdwarnx("need a share too");
+		usage();
+		return;
+	}
+	if (argc > 3) {
+		cmdwarnx("too many arguments");
 		usage();
 		return;
 	}
@@ -691,30 +693,9 @@ cmd_open(int argc, char **argv)
 			pass = passinput;
 	}
 
-	if (argc == 1) {
-		if (pass != NULL || Popt || user != NULL) {
-			cmdwarnx("no options are accepted for an alias");
-			usage();
-			return;
-		}
-
-		/* argument is an alias */
-		al = getalias(argv[0]);
-		if (al == NULL) {
-			cmdwarnx("no such alias");
-			return;
-		}
-
-		host = al->host;
-		share = al->share;
-		user = al->user;
-		pass = al->pass;
-		path = al->path;
-	} else {
-		host = argv[0];
-		share = argv[1];
-		path = argv[2];         /* argv[2] could be NULL */
-	}
+	host = argv[0];
+	share = argv[1];
+	path = argv[2];         /* argv[2] could be NULL */
 
 	/* ready for actual opening of connection */
 	errmsg = smb_connect(host, share, user, pass, path);

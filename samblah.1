@@ -8,10 +8,6 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl c Ar file
-.Op Ar alias
-.Pp
-.Nm
-.Op Fl c Ar file
 .Op Fl P | Fl p Ar pass
 .Op Fl u Ar user
 .Ar host Ar share Op Ar path
@@ -180,8 +176,8 @@ This location can be overridden by
 which can be overridden by the argument to
 .Fl c .
 .Pp
-A configuration file can contain three types of lines: comments,
-variable assignments and alias definitions.
+A configuration file can contain two types of lines: comments
+and variable assignments.
 Note that
 .Nm
 will exit when the file contains invalid lines.
@@ -198,17 +194,6 @@ recognized as comment and thus will
 be ignored.
 Non-comment lines are parsed (i.e. have the same quoting mechanism)
 in the exact same manner as the interactive commands.
-.Pp
-Syntax of the alias definitions:
-.Dl alias Ao alias Ac Ns \& Ao definition Ac
-.Pp
-Where
-.Aq definition
-has the same syntax as the arguments to the interactive command
-.Ic open ,
-except that it cannot be another alias.  A line might
-look like this:
-.Dl "alias newalias -u myuser -p mypass myhost myshare mypath"
 .Pp
 The variable assignments have the exact same syntax as the interactive
 command
