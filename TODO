@@ -1,9 +1,21 @@
 Bugs:
 - Find out why smbc_stat seemingly randomly returns errors when
-  connecting to e.g. bondgirl 'pinkpop 2001'.
+  connecting to certain computers.
 - Chdir's to some directories succeed when the directories do not
   exist.  Which ones?
 - Fix transfers of files >2GB.
+- Rework uri functions in smbwrap.c.
+- Fix XXX's.
+- What about connecting to one server multiple times with different
+  usernames/passwords.  Will the callback call back?  Probably not.
+- Find solution to readline quoting problems.
+- See about character encodings in libsmbclient.
+- Use utf-8 or locale indepedent functions for determining length?
+  Would be useful for progress bar.
+- Instead of using smb{,c}_readdir, getdents (or what its name is)
+  could be used, perhaps that is more efficient (need to check if
+  libsmbclient requests directory entries efficiently, i.e. read more
+  than requested).
 
 
 $Id$

@@ -33,7 +33,7 @@ all: samblah samblah.0
 	$(CC) $(CFLAGS) -I. -I$(LIBREADLINE_INCLUDE) -c -o $@ $?
 
 samblah: $(OBJS) libegetopt.a libsmbwrap.a
-	$(LD) $(LDFLAGS) -L. -L$(LIBREADLINE_LIBRARY) -L$(LIBSMBCLIENT_LIBRARY) -o samblah $(OBJS) -ltermcap -lreadline -legetopt -lsmbwrap -lsmbclient
+	$(LD) $(LDFLAGS) -L. -L$(LIBREADLINE_LIBRARY) -L$(LIBSMBCLIENT_LIBRARY) -o samblah $(OBJS) libegetopt.a libsmbwrap.a -lncurses -lreadline -lsmbclient
 
 libegetopt.a: egetopt.c egetopt.h
 	$(CC) $(CFLAGS) -c -o egetopt.o egetopt.c
