@@ -2,63 +2,57 @@
 
 #include "samblah.h"
 
-
-static struct alias    *aliasv = NULL;
-static int              aliasc = 0;
-
+static List    *aliases = NULL;
 
 /*
- * Sets an alias, creates a new alias if it does not exist.  Only alias,
- * host and share must be non-NULL.
+ * Create a new alias.  User, pass and path may be NULL.
+ * On success NULL is returned, otherwise an error message is returned.
  */
 const char *
-setalias(const char *alias, const char *user, const char *pass,
+setalias(const char *aliasname, const char *user, const char *pass,
     const char *host, const char *share, const char *path)
 {
-	void *tmp;
-	struct alias *aliasp;
+	Alias  *alias;
 
-	/*
-	 * any alias is allowed as long as it isn't too long, validconn
-	 * checks if arguments aren't too long and for invalid characters
-	 */
-	if (strlen(alias) > ALIAS_MAXLEN ||
-	    !validconn(user, pass, host, share, path))
+	if (aliases == NULL)
+		aliases = list_new();
+
+	if (strlen(aliasname) > ALIAS_MAXLEN || !validconn(user, pass, host, share, path))
 		return "invalid alias";
 
-	/* check if alias with this name already exists */
-	if (getalias(alias) != NULL)
+	if (getalias(aliasname) != NULL)
 		return "alias already exists";
 
-	/* reallocate alias vector for new element and trailing NULL */
-	tmp = realloc(aliasv, (aliasc + 2) * sizeof (struct alias));
-	if (tmp == NULL)
-		return "out of memory";
-	aliasv = tmp;
-
 	/* empty strings for user and pass will be dealt with in smbwrap */
-	aliasp = &aliasv[aliasc++];
-
-	strcpy(aliasp->alias, alias);
-	strcpy(aliasp->user, (user != NULL) ? user : "");
-	strcpy(aliasp->pass, (pass != NULL) ? pass : "");
-	strcpy(aliasp->host, host);
-	strcpy(aliasp->share, share);
-	strcpy(aliasp->path, (path != NULL) ? path : "/");
+	alias = xmalloc(sizeof (Alias));
+	strcpy(alias->alias, aliasname);
+	strcpy(alias->user, (user != NULL) ? user : "");
+	strcpy(alias->pass, (pass != NULL) ? pass : "");
+	strcpy(alias->host, host);
+	strcpy(alias->share, share);
+	strcpy(alias->path, (path != NULL) ? path : "/");
+	list_add(aliases, alias);
 
 	return NULL;
 }
 
 
-/* Finds an alias by name, returns NULL when no such alias exists. */
-struct alias *
+/*
+ * Finds an alias by name, returns NULL when no such alias exists.
+ */
+const Alias *
 getalias(const char *name)
 {
-	int i;
+	int	i;
+	Alias  *alias;
 
-	/* find matching name for alias and return pointer to that alias */
-	for (i = 0; i < aliasc; ++i)
-		if (streql(name, aliasv[i].alias))
-			return &aliasv[i];
+	if (aliases == NULL)
+		return NULL;
+
+	for (i = 0; i < list_count(aliases); ++i) {
+		alias = (Alias *)list_elem(aliases, i);
+		if (streql(name, alias->alias))
+			return alias;
+	}
 	return NULL;
 }

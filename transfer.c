@@ -2,13 +2,11 @@
 
 #include "samblah.h"
 
+enum {
+	TRANSFER_BUFSIZE     = 32768,	/* size of buffer for `get' */
+	PROGRESSLINE_MAXLEN  =  1024	/* length of line, used for buffer */
+};
 
-#define TRANSFER_BUFSIZE       32768    /* size of buffer for `get' */
-#define PROGRESSLINE_MAXLEN     1024    /* length of line, used for buffer */
-
-
-/* For specifying if a file (descriptor) is remote or local. */
-enum side       { SIDE_REMOTE, SIDE_LOCAL };
 
 /* Used by copybyfd to print progress. */
 static const char      *file;
@@ -24,9 +22,9 @@ static int      progresslen;
 
 static void     alarm_handler(int);
 static int      mkpath(const char *, mode_t, int (*)(const char *, mode_t));
-static void     transfer(enum side, const char *, const char *, int *, int);
-static void     transferfile(enum side, const char *, const char *, int *);
-static int      copybyfd(int, int, enum side, off_t, off_t, const char *);
+static void     transfer(int, const char *, const char *, int *, int);
+static void     transferfile(int, const char *, const char *, int *);
+static int      copybyfd(int, int, int, off_t, off_t, const char *);
 static int      askonexist(const char *, struct stat, struct stat, int *, int *);
 static int      open_wrap(const char *, int, mode_t);
 static void     makeprogress(const char *, double, off_t);
@@ -44,8 +42,11 @@ static unsigned long    timediff(struct timeval, struct timeval);
 void
 transfer_get(const char *rpath, const char *lpath, int *exist, int ropt)
 {
+	int remotesource;
+
 	/* use the generic transfer for retrieving */
-	transfer(SIDE_REMOTE, rpath, lpath, exist, ropt);
+	remotesource = 1;
+	transfer(remotesource, rpath, lpath, exist, ropt);
 }
 
 
@@ -57,8 +58,11 @@ transfer_get(const char *rpath, const char *lpath, int *exist, int ropt)
 void
 transfer_put(const char *lpath, const char *rpath, int *exist, int ropt)
 {
+	int	remotesource;
+
 	/* use the generic transfer for uploading */
-	transfer(SIDE_LOCAL, lpath, rpath, exist, ropt);
+	remotesource = 0;
+	transfer(remotesource, lpath, rpath, exist, ropt);
 }
 
 
@@ -69,15 +73,15 @@ transfer_put(const char *lpath, const char *rpath, int *exist, int ropt)
  * errno set.
  */
 int
-transfer_get_fd(const char *rpath, int fd)
+transfer_get_fd(const char *rpath, int destfd)
 {
-	int sfd;                /* remote file descriptor */
-	struct stat st;         /* remote file information */
-	int save_errno;		
+	int	sourcefd;
+	int	save_errno;		
+	int	remotesource;
+	struct stat st;
 
-	/* open remote file */
-	sfd = smb_open(rpath, O_RDONLY, (mode_t)0);
-	if (sfd < 0) {
+	sourcefd = smb_open(rpath, O_RDONLY, (mode_t)0);
+	if (sourcefd < 0) {
 		cmdwarn("opening %s", rpath);
 		return 0;
 	}
@@ -87,14 +91,15 @@ transfer_get_fd(const char *rpath, int fd)
 		save_errno = errno;
 
 		cmdwarn("%s", rpath);
-		(void)smb_close(sfd);
+		(void)smb_close(sourcefd);
 
 		errno = save_errno;
 		return 0;
 	}
 
 	/* do the copying, copybyfd closes the file handles */
-	if (!copybyfd(sfd, fd, SIDE_REMOTE, (off_t)0, st.st_size, rpath)) {
+	remotesource = 1;
+	if (!copybyfd(sourcefd, destfd, remotesource, (off_t)0, st.st_size, rpath)) {
 		/* on SIGINT, do not say anything, just stop */
 		if (!int_signal)
 			cmdwarn("retrieving %s", rpath);
@@ -106,30 +111,29 @@ transfer_get_fd(const char *rpath, int fd)
 
 
 /*
- * Transfers spath (source path) which resides as sside (remote or
- * local) to dpath (destination path) which resides at the opposite
- * side of dside, when ropt is true spath is retrieved recursively.
- * dexist what to do when dpath exists, note that this must be a
- * pointer so the value can be save when the user selects `overwrite
- * all', `resume all' or `skip all'.
+ * Transfers spath (source path) which is remote or local (remotesource), to
+ * dpath (destination path) which resides at the opposite side (remote or
+ * local), when ropt is true spath is retrieved recursively.  dexist what to do
+ * when dpath exists, note that this must be a pointer so the value can be save
+ * when the user selects `overwrite all', `resume all' or `skip all'.
  */
 static void
-transfer(enum side sside, const char *spath, const char *dpath,
+transfer(int remotesource, const char *spath, const char *dpath,
     int *dexist, int ropt)
 {
 	int len;                /* for length of spath */
 	int dh = -1;            /* for remote directory handle */
 	DIR *dp = NULL;         /* for local directory stream */
 
-	struct stat st;                         /* for information of spath */
-	const struct smb_dirent *rdent = NULL;  /* for recursion on remote */
-	const struct dirent *ldent = NULL;      /* for recursion on local */
+	struct stat st;		/* for information of spath */
+	const Smbdirent *rdent = NULL;		/* for recursion on remote */
+	const struct dirent *ldent = NULL;	/* for recursion on local */
 
 	int (*sstat)(const char *, struct stat *);      /* for source-stat */
 	int (*dmkdir)(const char *, mode_t);    /* for mkdir of destination */
 
-	sstat = (sside == SIDE_REMOTE) ? smb_stat : stat;
-	dmkdir = (sside == SIDE_REMOTE) ? mkdir : smb_mkdir;
+	sstat = remotesource ? smb_stat : stat;
+	dmkdir = remotesource ? mkdir : smb_mkdir;
 
 	/* have to find out if argument is file or directory */
 	if (sstat(spath, &st) != 0) {
@@ -139,7 +143,7 @@ transfer(enum side sside, const char *spath, const char *dpath,
 
 	/* if file, transfer immediately */
 	if (!S_ISDIR(st.st_mode)) {
-		transferfile(sside, spath, dpath, dexist);
+		transferfile(remotesource, spath, dpath, dexist);
 		return;
 	}
 
@@ -155,8 +159,8 @@ transfer(enum side sside, const char *spath, const char *dpath,
 	}
 
 	/* retrieve contents of directory */
-	if ((sside == SIDE_REMOTE && (dh = smb_opendir(spath)) < 0) ||
-	    (sside == SIDE_LOCAL && ((dp = opendir(spath)) == NULL))) {
+	if ((remotesource && (dh = smb_opendir(spath)) < 0) ||
+	    (!remotesource && ((dp = opendir(spath)) == NULL))) {
 		cmdwarn("opening %s", spath);
 		return;
 	}
@@ -165,25 +169,22 @@ transfer(enum side sside, const char *spath, const char *dpath,
 
 	/* walk through contents of directory */
 	while (!int_signal &&
-	    ((sside == SIDE_REMOTE && (rdent = smb_readdir(dh)) != NULL) ||
-	    (sside == SIDE_LOCAL && ((ldent = readdir(dp)) != NULL)))) {
+	    ((remotesource && (rdent = smb_readdir(dh)) != NULL) ||
+	    (!remotesource && ((ldent = readdir(dp)) != NULL)))) {
 		char *nspath;                   /* for new source path */
 		char *ndpath;                   /* for new destination path */
 		const char *sdent_name;         /* for directory entry */
 		long spathmax, dpathmax;        /* for max lengths of paths */
 		int ndpathlen, nspathlen;       /* for lengths of new paths */
 
-		sdent_name = (sside == SIDE_REMOTE)
-		    ? rdent->name : ldent->d_name;
-		spathmax = (sside == SIDE_REMOTE)
-		    ? SMB_PATH_MAXLEN : pathconf(spath, _PC_PATH_MAX);
-		dpathmax = (sside == SIDE_LOCAL)
-		    ? SMB_PATH_MAXLEN : pathconf(dpath, _PC_PATH_MAX);
+		sdent_name = remotesource ? rdent->name : ldent->d_name;
+		spathmax = remotesource ? SMB_PATH_MAXLEN : pathconf(spath, _PC_PATH_MAX);
+		dpathmax = !remotesource ? SMB_PATH_MAXLEN : pathconf(dpath, _PC_PATH_MAX);
 
 		/* use default PATH_MAXLEN when pathconf returns infinite */
-		if (sside == SIDE_LOCAL && spathmax == -1)
+		if (!remotesource && spathmax == -1)
 			spathmax = FALLBACK_PATH_MAXLEN;
-		if (sside == SIDE_REMOTE && dpathmax == -1)
+		if (remotesource && dpathmax == -1)
 			dpathmax = FALLBACK_PATH_MAXLEN;
 
 		/* make sure we do not transfer dot or dot-dot */
@@ -231,14 +232,14 @@ transfer(enum side sside, const char *spath, const char *dpath,
 		strcat(ndpath, sdent_name);
 
 		/* transfer the new file/directory recursively */
-		transfer(sside, nspath, ndpath, dexist, ropt);
+		transfer(remotesource, nspath, ndpath, dexist, ropt);
 
 		free(ndpath);
 		free(nspath);
 	}
 
 	if (int_signal) {
-		if (sside == SIDE_REMOTE)
+		if (remotesource)
 			(void)smb_closedir(dh);
 		else
 			(void)close(dh);
@@ -246,20 +247,19 @@ transfer(enum side sside, const char *spath, const char *dpath,
 	}
 
 	/* cleanup */
-	if ((sside == SIDE_REMOTE && smb_closedir(dh) != 0) ||
-	    (sside == SIDE_LOCAL && closedir(dp) != 0))
+	if ((remotesource && smb_closedir(dh) != 0) ||
+	    (!remotesource && closedir(dp) != 0))
 		cmdwarn("closing %s", spath);
 }
 
 
 /*
- * Transfers spath which resides at sside to dpath (which resides
- * at the opposite side of sside.  dexist tells what to do when dpath
- * exits.
+ * Transfers spath which may be remote or local (remotesource), to dpath (which
+ * resides at the opposite side (local or remote)).  dexist tells what to do
+ * when dpath exits.
  */
 static void
-transferfile(enum side sside, const char *spath, const char *dpath,
-    int *dexist)
+transferfile(int remotesource, const char *spath, const char *dpath, int *dexist)
 {
 	/* for calling tranferfile after having asked on destination exist */
 	int tmpexist;
@@ -278,15 +278,15 @@ transferfile(enum side sside, const char *spath, const char *dpath,
 	off_t (*slseek)(int, off_t, int);
 	int (*sfstat)(int, struct stat *);
 
-	dopen = (sside == SIDE_REMOTE) ? open_wrap : smb_open;
-	sopen = (sside == SIDE_REMOTE) ? smb_open : open_wrap;
-	dclose = (sside == SIDE_REMOTE) ? close : smb_close;
-	sclose = (sside == SIDE_REMOTE) ? smb_close : close;
-	dstat = (sside == SIDE_REMOTE) ? stat : smb_stat;
-	sstat = (sside == SIDE_REMOTE) ? smb_stat : stat;
-	dlseek = (sside == SIDE_REMOTE) ? lseek : smb_lseek;
-	slseek = (sside == SIDE_REMOTE) ? smb_lseek : lseek;
-	sfstat = (sside == SIDE_REMOTE) ? smb_fstat : fstat;
+	dopen  = remotesource ? open_wrap : smb_open;
+	sopen  = remotesource ? smb_open : open_wrap;
+	dclose = remotesource ? close : smb_close;
+	sclose = remotesource ? smb_close : close;
+	dstat  = remotesource ? stat : smb_stat;
+	sstat  = remotesource ? smb_stat : stat;
+	dlseek = remotesource ? lseek : smb_lseek;
+	slseek = remotesource ? smb_lseek : lseek;
+	sfstat = remotesource ? smb_fstat : fstat;
 
 	offset = 0;             /* start at begin by default */
 	dst.st_size = 0;        /* `current position' is begin by default */
@@ -300,91 +300,81 @@ transferfile(enum side sside, const char *spath, const char *dpath,
 		/* for checking if file exists (ask or resume) */
 		flags |= O_EXCL;
 
-	/* XXX this goes too deep and gets too ugly */
-
 	/* open/create destination file */
 	if ((dfd = dopen(dpath, flags,
 	    (mode_t)(S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH))) < 0) {
 
-		/* file exists, check what to do */
-		if (errno == EEXIST) {
-
-			if (*dexist == VAR_SKIP)
-				return;
-
-			/* get attributes of destination and source */
-			if (dstat(dpath, &dst) != 0) {
-				cmdwarn("%s", dpath);
-				return;
-			}
-
-			if (sstat(spath, &sst) != 0) {
-				cmdwarn("%s", spath);
-				return;
-			}
-
-			/* if we should be resuming, try to open destination */
-			if (*dexist == VAR_RESUME) {
-				/* cannot resume beyond file */
-				if (sst.st_size <= dst.st_size) {
-					cmdwarnx("resuming %s: already as "
-					    "large as or larger than source",
-					    spath);
-					return;
-				}
-
-				dfd = dopen(dpath, O_WRONLY, (mode_t)0);
-				if (dfd < 0) {
-					cmdwarn("opening %s", dpath);
-					return;
-				}
-
-				/* determine offset from start */
-				if (dst.st_size > RESUME_ROLLBACK)
-					offset = dst.st_size - RESUME_ROLLBACK;
-				else
-					offset = 0;
-
-				/* seek to right location */
-				if (offset > 0) {
-					if (dlseek(dfd, offset, SEEK_SET) ==
-					    -1) {
-						cmdwarn("seeking %s", dpath);
-						(void)close(dfd);
-						return;
-					}
-				}
-
-				/* variable dfd now is valid `destination' */
-			} else {
-				/* ask what to do */
-				if (!askonexist(dpath, sst, dst,
-				    &tmpexist,dexist)) {
-					if (!int_signal)
-						cmdwarnx("could not read "
-						    "answer");
-					return;
-				}
-
-				if (tmpexist == VAR_SKIP)
-					return;
-
-				if (tmpexist == VAR_RESUME &&
-				    sst.st_size <= dst.st_size) {
-					cmdwarnx("resuming %s: already as "
-					    "large as or larger than source",
-					    spath);
-					return;
-				}
-
-				/* tmpexist is VAR_RESUME or VAR_OVERWRITE */
-				transferfile(sside, spath, dpath, &tmpexist);
-				return;
-			}
-		}
-		/* other error, clean up */
-		else {
+		if (errno != EEXIST) {
 			cmdwarn("opening %s", dpath);
+			return;
+		}
+
+		/* O_CREAT and O_EXCL were specified and the file exists */
+
+		if (*dexist == VAR_SKIP)
+			return;
+
+		/* get attributes of destination and source */
+		if (dstat(dpath, &dst) != 0) {
+			cmdwarn("%s", dpath);
+			return;
+		}
+
+		if (sstat(spath, &sst) != 0) {
+			cmdwarn("%s", spath);
+			return;
+		}
+
+		/* if we should be resuming, try to open destination */
+		if (*dexist == VAR_RESUME) {
+			/* cannot resume beyond file */
+			if (sst.st_size <= dst.st_size) {
+				cmdwarnx("resuming %s: already as large as "
+					"or larger than source", spath);
+				return;
+			}
+
+			dfd = dopen(dpath, O_WRONLY, (mode_t)0);
+			if (dfd < 0) {
+				cmdwarn("opening %s", dpath);
+				return;
+			}
+
+			/* determine offset from start */
+			if (dst.st_size > RESUME_ROLLBACK)
+				offset = dst.st_size - RESUME_ROLLBACK;
+			else
+				offset = 0;
+
+			/* seek to right location */
+			if (offset > 0) {
+				if (dlseek(dfd, offset, SEEK_SET) == -1) {
+					cmdwarn("seeking %s", dpath);
+					(void)close(dfd);
+					return;
+				}
+			}
+
+			/* variable dfd now is valid `destination' */
+		} else {
+			/* ask what to do */
+			if (!askonexist(dpath, sst, dst, &tmpexist,dexist)) {
+				if (!int_signal)
+					cmdwarnx("could not read answer");
+				return;
+			}
+
+			if (tmpexist == VAR_SKIP)
+				return;
+
+			if (tmpexist == VAR_RESUME && sst.st_size <= dst.st_size) {
+				cmdwarnx("resuming %s: already as large as or "
+					"larger than source", spath);
+				return;
+			}
+
+			/* tmpexist is VAR_RESUME or VAR_OVERWRITE */
+			transferfile(remotesource, spath, dpath, &tmpexist);
 			return;
 		}
 	}
@@ -416,7 +406,7 @@ transferfile(enum side sside, const char *spath, const char *dpath,
 	}
 
 	/* copy the fd's, copybyfd closes file handles */
-	if (!copybyfd(sfd, dfd, sside, offset, sst.st_size, spath))
+	if (!copybyfd(sfd, dfd, remotesource, offset, sst.st_size, spath))
 		/* on SIGINT, do not say anything, just stop */
 		if (!int_signal)
 			cmdwarn("transferring %s", spath);
@@ -426,15 +416,14 @@ transferfile(enum side sside, const char *spath, const char *dpath,
 
 
 /*
- * Copies from from to to.  fromside is the side of the source.
- * cur is the current offset in from at which the copying starts.
- * size is the total size of the file to be copied.  frompath is the
- * name that goes with from (the first argument).  On failure 0 is
- * returned and errno is set, otherwise anything but 0 may be returned.
+ * Copies from from to to.  remotesource denotes if the source is remote or
+ * local.  cur is the current offset in from at which the copying starts.  size
+ * is the total size of the file to be copied.  frompath is the name that goes
+ * with from (the first argument).  On failure 0 is returned and errno is set,
+ * otherwise anything but 0 may be returned.
  */
 static int
-copybyfd(int from, int to, enum side fromside, off_t cur, off_t size,
-    const char *frompath)
+copybyfd(int from, int to, int remotesource, off_t cur, off_t size, const char *frompath)
 {
 	char buf[TRANSFER_BUFSIZE];     /* transfer buffer */
 	ssize_t count;                  /* number of bytes read */
@@ -455,7 +444,7 @@ copybyfd(int from, int to, enum side fromside, off_t cur, off_t size,
 	written = -1;
 
 	/* determine which functions to use */
-	if (fromside == SIDE_REMOTE) {
+	if (remotesource) {
 		readfrom = smb_read;
 		writeto = write;
 		closefrom = smb_close;

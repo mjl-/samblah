@@ -2,86 +2,56 @@
 
 #include "samblah.h"
 
-
-const char *variablenamev[] = {
-	"onexist",
-	"pager",
-	"showprogress"
-};
-int variablenamec = sizeof variablenamev / sizeof (char *);
-
-
-enum    { VARTYPE_BOOLEAN, VARTYPE_ONEXIST, VARTYPE_STRING };
-struct variable {
-	const char     *name;
-	int             type;
-	void           *value;
-};
-
-
-/* Variables and their default values. */
+/* variables and their default values */
 static int      onexist = VAR_ASK;
 static int      showprogress = 1;
 static char     pager[VAR_STRING_MAXLEN + 1] = DEFAULT_PAGER;
 
-/* All information about the variables. */
-static struct variable variablev[] = {
-    { "onexist", VARTYPE_ONEXIST, &onexist },
-    { "pager", VARTYPE_STRING, pager },
-    { "showprogress", VARTYPE_BOOLEAN, &showprogress }
-};
-static int variablec = sizeof variablev / sizeof (struct variable);
+const char **
+listvariables(void)
+{
+	static const char *variables[] = { "onexist", "pager", "showprogress", NULL };
 
+	return variables;
+}
 
-static struct variable *findvariable(const char *);
-
-
-/* Sets name to value, value remains unchanged on error.  */
+/*
+ * Sets the value of variable `name' to the given value.
+ * On error, an error string is returned.  Otherwise, NULL is returned.
+ */
 const char *
 setvariable(const char *name, const char *valuestr)
 {
-	struct variable *p;
-	void *value;
-
-	p = findvariable(name);
-	if (p == NULL)
-		return "no such variable";
-	value = p->value;
-
-	/* types are handled differently */
-	switch (p->type) {
-	case VARTYPE_BOOLEAN:
+	if (streql(name, "onexist")) {
+		if (streql(valuestr, "ask"))
+			onexist = VAR_ASK;
+		else if (streql(valuestr, "resume"))
+			onexist = VAR_RESUME;
+		else if (streql(valuestr, "overwrite"))
+			onexist = VAR_OVERWRITE;
+		else if (streql(valuestr, "skip"))
+			onexist = VAR_SKIP;
+		else
+			return "invalid value, must be ask, resume, "
+			    "overwrite or skip";
+		return NULL;
+	} else if (streql(name, "pager")) {
+		if (strlen(valuestr) + 1 > sizeof pager)
+			return "value too long";
+		strcpy(pager, valuestr);
+		return NULL;
+	} else if (streql(name, "showprogress")) {
 		if (streql(valuestr, "yes"))
-			*((int *)value) = 1;
+			showprogress = 1;
 		else if (streql(valuestr, "no"))
-			*((int *)value) = 0;
+			showprogress = 0;
 		else
 			return "invalid value, must be yes or no";
 		return NULL;
-	case VARTYPE_ONEXIST:
-		if (streql(valuestr, "ask"))
-			*((int *)value) = VAR_ASK;
-		else if (streql(valuestr, "resume"))
-			*((int *)value) = VAR_RESUME;
-		else if (streql(valuestr, "overwrite"))
-			*((int *)value) = VAR_OVERWRITE;
-		else if (streql(valuestr, "skip"))
-			*((int *)value) = VAR_SKIP;
-		else
-			return "invalid value, must be ask, resume,"
-			    "overwrite or skip";
-		return NULL;
-	case VARTYPE_STRING:
-		if (strlen(valuestr) > VAR_STRING_MAXLEN)
-			return "value too long";
-		strcpy((char *)value, valuestr);
-		return NULL;
+	} else {
+		return "unknown variable";
 	}
-	warnx("unknown variable type in setvariable");
-	abort();
-	/* NOTREACHED */
 }
-
 
 /*
  * Same as getvariable_{boolean,onexist,string}, but variable and value as
@@ -90,86 +60,40 @@ setvariable(const char *name, const char *valuestr)
 char *
 getvariable(const char *name)
 {
-	struct variable *p;
-	void *value;
-	int value_int;
-
-	/* find variable info */
-	p = findvariable(name);
-	if (p == NULL)
-		return NULL;
-	value = p->value;
-
-	/* types are handled differently */
-	switch (p->type) {
-	case VARTYPE_BOOLEAN:           return *(int *)value ? "yes" : "no";
-	case VARTYPE_STRING:            return (char *)p->value;
-	case VARTYPE_ONEXIST:
-		value_int = *(int *)value;
-
-		assert(value_int == VAR_ASK || value_int == VAR_RESUME ||
-		    value_int == VAR_OVERWRITE || value_int == VAR_SKIP);
-
-		switch (value_int) {
+	if (streql(name, "onexist")) {
+		switch (onexist) {
 		case VAR_ASK:	        return "ask";
 		case VAR_RESUME:        return "resume";
 		case VAR_OVERWRITE:     return "overwrite";
 		case VAR_SKIP:          return "skip";
-		default:
-			warnx("unknown value for `onexist' in getvariable");
-			abort();
+		default:		return NULL;	/* should not happen */
 		}
+	} else if (streql(name, "pager")) {
+		return pager;
+	} else if (streql(name, "showprogress")) {
+		return showprogress ? "yes" : "no";
+	} else {
+		return NULL;
 	}
-	warnx("unknown variable type in getvariable");
-	abort();
-	/* NOTREACHED */
 }
-
 
 int
 getvariable_bool(const char *name)
 {
-	struct variable *p;
-
-	p = findvariable(name);
-	assert(p != NULL && p->type == VARTYPE_BOOLEAN);
-
-	return *(int *)p->value;
+	assert(streql(name, "showprogress"));
+	return showprogress;
 }
-
 
 int
 getvariable_onexist(const char *name)
 {
-	struct variable *p;
-
-	p = findvariable(name);
-	assert(p != NULL && p->type == VARTYPE_ONEXIST);
-
-	return *(int *)p->value;
+	assert(streql(name, "onexist"));
+	return onexist;
 }
-
 
 char *
 getvariable_string(const char *name)
 {
-	struct variable *p;
-
-	p = findvariable(name);
-	assert(p != NULL && p->type == VARTYPE_STRING);
-
-	return (char *)p->value;
-}
-
-
-static struct variable *
-findvariable(const char *name)
-{
-	int i;
-
-	/* find matching variable info and return pointer to it */
-	for (i = 0; i < variablec; ++i)
-		if (streql(name, variablev[i].name))
-			return &variablev[i];
-	return NULL;
+	assert(streql(name, "pager"));
+	return pager;
 }

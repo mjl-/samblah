@@ -2,7 +2,6 @@
 
 #include "samblah.h"
 
-
 enum completion_type {
 	CMP_NONE,       /* no completion */
 	CMP_LOCAL,      /* local file completion */
@@ -10,296 +9,246 @@ enum completion_type {
 };
 
 
-static void     cmdmatch(const char *, int *, char ***);
-static void     filematch(char *, int *, char ***, enum completion_type);
+static char    *commonlead(const char *, const char *);
+static List    *cmdmatch(const char *);
+static List    *filematch(const char *, enum completion_type);
 static enum completion_type     cmptype(const char *);
 
 
 /*
- * NOTE: token is unused because we currently do the following
- * (because we cannot get readline to determine the token using the
- * quoting mechanism we want to use):
- * based on the currenty position of the cursor in the line we
- * determine to which token that position belongs and compare them
- * with `start' and `end', when it matches, readline did what we
- * wanted and we can complete the token, otherwise readline couldn't
- * get it right and we cannot tell readline which start/end it should
- * use, thus we cannot complete since readline would replace a wrong
- * part of the current line.
- */
-/* ARGSUSED */
-/*
- * Determines matches for token.  Alternative for
- * rl_attempted_completion_function, performs the command and file
- * completion.
+ * Complete() is called by readline to retrieve a list of completion for the
+ * given token, which starts at start and ends in end in readlines linebuffer.
+ * Our case is a bit complicated because samblah's quoting mechanism confuses
+ * readline, which sometimes causes it to get the token wrong (e.g. what it
+ * thinks is a token is actually more than a token or only the half of a
+ * token).  Therefore this function checks if readline got the start and end
+ * right.  If not, no matches are generated.  If it got it right, the matches
+ * are generated and returned.
+ * The returned matches and the vector in which it is contained is freed by
+ * readline.
  */
 char **
 complete(const char *token, int start, int end)
 {
-	char **tokenv = NULL;
-	int tokenc = 0;
-	char **matchv = NULL;
-	int matchc = 0;
-	char **newv;
-	int tokeni;
-	char *p1, *p2;
-	int i;
+	List   *tokens;
+	List   *matches;
+	int	tokenindex;
+	char   *first, *last;
+	char   *newtoken;
+	char   *token0;
+
+	tokens = list_new();
 
 	/* no fallback completion by readline */
 	rl_attempted_completion_over = 1;
 
 	/* parse command line so far, escaping special characters */
-	if (tokenize_partial_escape(rl_line_buffer,
-	    &tokenc, &tokenv, &tokeni, start, end) != NULL)
+	if (tokenize_partial_escape(rl_line_buffer, tokens, &tokenindex, start, end) != NULL) {
+		list_free(tokens); tokens = NULL;
 		return NULL;
+	}
 
 	/* readline did not correctly detect token */
-	if (tokeni == -1) {
+	if (tokenindex == -1) {
 		/*
 		 * TODO get readline to always get token right
 		fprintf(stderr, "\ntoken mismatch: '%s'\n", token);
 		 */
-		freelist(tokenc, tokenv);
+		list_free(tokens); tokens = NULL;
 		return NULL;
 	}
 
-	/* whether token is a command or a file */
-	if (tokeni == 0)
-		cmdmatch(tokenv[0], &matchc, &matchv);
+	token0 = (char *)list_elem(tokens, 0);
+	if (tokenindex == 0)
+		matches = cmdmatch(token0);
 	else
-		filematch(tokenv[tokeni], &matchc,
-		    &matchv, cmptype(tokenv[0]));
+		matches = filematch((char *)list_elem(tokens, tokenindex), cmptype(token0));
 
 	/* no need for the tokens as we parsed the line */
-	freelist(tokenc, tokenv);
+	list_free(tokens); tokens = NULL;
 
-	if (matchv == NULL || matchc == 0)
-		return NULL;    /* no matches */
-
-	/* sort so determining common leading string is easy */
-	qsort(matchv, (size_t)matchc, sizeof (char *), qstrcmp);
-
-	/* need space for leading element and trailing NULL */
-	newv = realloc(matchv, sizeof (char *) * (matchc + 2));
-	if (newv == NULL) {
-		freelist(matchc, matchv);
+	if (list_count(matches) == 0) {
+		list_free(matches); matches = NULL;
 		return NULL;
 	}
-	matchv = newv;
 
-	/* shift elements away from begin, including trailing NULL */
-	for (i = matchc; i >= 0; --i)
-		matchv[i + 1] = matchv[i];
-	++matchc;
+	/*
+	 * after sorting, the common leading string of the first and last
+	 * elements are the common leading string of all elements
+	 */
+	list_sort(matches, qstrcmp);
 
-	/* common leading string is that of first and last element */
-	p1 = matchv[1];
-	p2 = matchv[matchc - 1];
-	while (*p1 != '\0' && *p2 != '\0' && *p1 == *p2)
-		++p1, ++p2;
-
-	/* add command leading string as first element */
-	matchv[0] = malloc((size_t)(p1 - matchv[1] + 1));
-	if (matchv[0] == NULL) {
-		freelist(matchc, matchv);
-		return NULL;
-	}
-	strncpy(matchv[0], matchv[1], (size_t)(p1 - matchv[1]));
-	matchv[0][p1 - matchv[1]] = '\0';
+	first = (char *)list_elem(matches, 0);
+	last = (char *)list_elem(matches, list_count(matches) - 1);
+	newtoken = commonlead(first, last);
 
 	/* do not add space after a directory so we can go on completing */
-	if (*matchv[0] != '\0' && *(strchr(matchv[0], '\0') - 1) == '/')
+	if (newtoken[strlen(newtoken) - 1] == '/')
 		rl_completion_append_character = '\0';
 	else
 		rl_completion_append_character = ' ';
 
-	/* quote (escape characters too) part that will be inserted */
-	if ((matchv[0] = quote_escape(matchv[0])) == NULL) {
-		freelist(matchc, matchv);
-		return NULL;
-	}
+	list_prepend(matches, quote(newtoken));
 
-	return matchv;
+	return (char **)list_elems_freerest(matches);
 }
 
 
 /*
- * Displays matches when completing (rl_completion_display_matches_hook),
- * uses readline display function, but strips of common leading
- * directory part.
+ * Display the matches generated by complete() (see above).
+ * matchv	matchv[0] is the common leading substring of all elements in
+ *		matchv.  matchv[0] may be quoted, all other elements in matchv
+ *		are never quoted.  the first match generated by complete() is
+ *		in matchv[1], the last element is in matchv[matchc].
+ * matchc	number of elements in matchv.  the elements start at index 1.
+ * maxlen	length of the largest element
+ *
+ * displaymatches() strips the common leading directories from the matches to
+ * make the matches to be printed shorter.
+ * contents of matchv are unchanged after return.
  */
 void
 displaymatches(char **matchv, int matchc, int maxlen)
 {
-	char **newmatchv;
-	char *p1, *p2;
-	int i;
-	int leadlen;
-	char *lastslash;
+	int	i, leadlen;
+	char   *lastslash;
+	char   *common;
 
-	/* common leading string is that of first and last element */
-	lastslash = NULL;
-	p1 = matchv[1];
-	p2 = matchv[matchc];
-	while (*p1 != '\0' && *p2 != '\0' && *p1 == *p2) {
-		if (*p1 == '/')
-			lastslash = p1;
-		++p1, ++p2;
+	/*
+	 * up to the last slash of matchv[0] is the common leading directory
+	 * part
+	 */
+	common = matchv[0];
+	lastslash = strrchr(common, '/');
+
+	/*
+	 * determine leadlen, the number of characters to skip to remove the
+	 * common leading path
+	 */
+	leadlen = 0;
+	if (lastslash != NULL) {
+		/*
+		 * determine how many characters to remove to remove the common
+		 * leading directory parts.  matchv[0] may be quoted, then its
+		 * first character is a quote.  so remove one character less on
+		 * the rest of matchv (since the rest is never quoted).  maxlen
+		 * also changes.
+		 */
+		leadlen = lastslash - common + 1;
+		if (common[0] == '\'')
+			leadlen -= 1;
+		maxlen -= leadlen;
 	}
 
-	/* when no leading directory part, just print matches */
-	if (lastslash == NULL) {
-		rl_display_match_list(matchv, matchc, maxlen);
-		rl_on_new_line();
-		return;
-	}
-
-	/* leading common directory part, and new maximum length */
-	leadlen = lastslash - matchv[1] + 1;
-	maxlen -= leadlen;
-
-	/* new list with matches and leading substring */
-	newmatchv = malloc(sizeof (char *) * (matchc + 1));
-	if (newmatchv == NULL)
-		return;
-	newmatchv[0] = malloc((size_t)(p1 - (matchv[1] + leadlen) + 1));
-	if (newmatchv[0] == NULL) {
-		free(newmatchv);
-		return;
-	}
-	strncpy(newmatchv[0], matchv[1] + leadlen,
-	    (size_t)(p1 - (matchv[1] + leadlen)));
-	newmatchv[0][p1 - (matchv[1] + leadlen)] = '\0';
-
-	/* fill the list list */
+	/* display the possibly shorter matches */
 	for (i = 1; i <= matchc; ++i)
-		newmatchv[i] = matchv[i] + leadlen;
-	
-	/* let readline display the adjusted matches */
-	rl_display_match_list(newmatchv, matchc, maxlen);
+		matchv[i] += leadlen;
+	rl_display_match_list(matchv, matchc, maxlen);
+	for (i = 1; i <= matchc; ++i)
+		matchv[i] -= leadlen;
 
-	free(newmatchv[0]);
-	free(newmatchv);
-
-	/* make readline print the prompt and what is on the line */
+	/* make readline print the prompt and current line buffer contents */
 	rl_on_new_line();
 }
 
 
 /*
- * Generates matching commands for token.  Matches are put in argmatchv
- * (NULL terminated) and the number of elements in argmatchc.  On
- * error argmatchv will be NULL and argmatchc zero.
+ * Allocate and return the common leading string of first and last.
  */
-static void
-cmdmatch(const char *token, int *argmatchc, char ***argmatchv)
+static char *
+commonlead(const char *first, const char *last)
 {
-	size_t tokenlen;
-	const char *cmd;
-	char **matchv = NULL;
-	int matchc = 0;
-	char **newv;
-	int i;
+	int	i;
+	char   *newtoken;
 
-	/* no matches by default */
-	*argmatchv = NULL;
-	*argmatchv = 0;
-	tokenlen = strlen(token);
+	i = 0;
+	while (first[i] != '\0' && last[i] != '\0' && first[i] == last[i])
+		++i;
+
+	newtoken = xmalloc(i + 1);
+	memmove(newtoken, first, i);
+	newtoken[i] = '\0';
+
+	return newtoken;
+}
+
+/*
+ * Generates commands starting with token and returns them as a List.
+ * The returned List is never NULL but may contain zero elements.
+ */
+static List *
+cmdmatch(const char *token)
+{
+	List   *tokens;
+	size_t	tokenlen;
+	int	i;
+	Cmd    *cmd;
 
 	/* walk through commands and check for matches */
-	for (i = 0; i < cmdc; ++i) {
-		if (strncmp(token, cmd = cmdv[i].name, tokenlen) != 0)
-			continue;
-
-		/* space for new element and trailing NULL */
-		newv = realloc(matchv, sizeof (char *) * (matchc + 2));
-		if (newv == NULL) {
-			freelist(matchc, matchv);
-			return;
-		}
-		matchv = newv;
-
-		/* make copy of command so readline can free it */
-		if ((matchv[matchc++] = strdup(cmd)) == NULL) {
-			freelist(matchc, matchv);
-			return;
+	tokens = list_new();
+	tokenlen = strlen(token);
+	for (i = 0; i < commandcount; ++i) {
+		cmd = &commands[i];
+		if (strncmp(token, cmd->name, tokenlen) == 0) {
+			/* make copy so that readline can free it */
+			list_add(tokens, xstrdup(cmd->name));
 		}
 	}
-
-	/* when at least one match, add leading and trailing NULL */
-	if (matchv != NULL)
-		matchv[matchc] = NULL;
-
-	*argmatchc = matchc;
-	*argmatchv = matchv;
+	return tokens;
 }
 
 
 /*
- * Same as cmdmatch but token is the file to match.  It works like
- * cmdmatch.  Type denotes which completion to do.
+ * Generate matches for the file starting with token.  Type denotes if the file
+ * is remote or local.
  */
-static void
-filematch(char *token, int *argmatchc, char ***argmatchv,
-    enum completion_type type)
+static List *
+filematch(const char *token, enum completion_type type)
 {
-	char **matchv = NULL;
-	int matchc = 0;
-	char **newv;
-	char *ntoken;
+	Str    *pattern;
+	List   *tokens;
+	int	remoteglobbing;
 
-	/* no matches by default */
-	*argmatchv = NULL;
-	*argmatchc = 0;
+	tokens = list_new();
 
 	if (type == CMP_NONE)
-		return;
+		return tokens;
 
-	/* add `*' at end of token so globbing can match things */
-	ntoken = malloc(strlen(token) + 2);
-	if (ntoken == NULL)
-		return;
-	strcpy(ntoken, token);
-	strcat(ntoken, "*");
+	/* add `*' at end of token so there is something to match */
+	pattern = str_new(token);
+	str_putcharptr(pattern, "*");
 
-	/* do globbing on the token */
-	if (tokenmatch("", ntoken, &matchc, &matchv,
-	    (type == CMP_REMOTE) ? LOC_REMOTE : LOC_LOCAL) != GLB_OK) {
-		free(ntoken);
-		freelist(matchc, matchv);
-		return;
+	remoteglobbing = (type == CMP_REMOTE);
+	if (tokenmatch(str_charptr(pattern), tokens, remoteglobbing) != GLB_OK) {
+		list_free(tokens);
+		tokens = list_new();
 	}
-	free(ntoken);
+	str_free(pattern); pattern = NULL;
 
-	/* need space for trailing NULL */
-	newv = realloc(matchv, sizeof (char *) * (matchc + 1));
-	if (newv == NULL) {
-		freelist(matchc, matchv);
-		return;
-	}
-	matchv = newv;
-	matchv[matchc] = NULL;
-
-	*argmatchc = matchc;
-	*argmatchv = matchv;
+	return tokens;
 }
 
 
-/* Determines which completion to do based on cmd. */
+/*
+ * Determines which completion to do based on command.
+ */
 static enum completion_type
-cmptype(const char *cmd)
+cmptype(const char *name)
 {
-	int i;
+	int	i;
+	Cmd    *cmd;
 
-	for (i = 0; i < cmdc; ++i) {
-		if (!streql(cmd, cmdv[i].name))
+	for (i = 0; i < commandcount; ++i) {
+		cmd = &commands[i];
+
+		if (!streql(name, cmd->name))
 			continue;
 
-		if (streql(cmd, "put"))
+		if (streql(name, "put"))
 			return CMP_LOCAL;
-		else if (cmdv[i].conn == CMD_MUSTCONN && !connected)
+		else if (cmd->conn == CMD_MUSTCONN && !connected)
 			return CMP_NONE;
-		else if (cmdv[i].conn == CMD_MUSTCONN && connected)
+		else if (cmd->conn == CMD_MUSTCONN && connected)
 			return CMP_REMOTE;
 		return CMP_LOCAL;
 	}

@@ -1,6 +1,5 @@
 # $Id$
 
-
 # Set the following variables to the location of the libsmbclient and
 # libreadline header and library files.
 
@@ -13,8 +12,8 @@ LIBSMBCLIENT_LIBRARY=$(HOME)/local/lib
 # From the following source/object files, the samblah binary is
 # built.  This does not include the files for libegetopt.a and
 # libsmbwrap.a.
-SRCS=alias.c cmdls.c cmds.c complete.c init.c interface.c main.c misc.c parsecl.c pcols.c smbglob.c smbhlp.c transfer.c vars.c
-OBJS=alias.o cmdls.o cmds.o complete.o init.o interface.o main.o misc.o parsecl.o pcols.o smbglob.o smbhlp.o transfer.o vars.o
+SRCS=alias.c cmdls.c cmds.c complete.c init.c interface.c list.c main.c misc.c parsecl.c smbglob.c smbhlp.c str.c transfer.c vars.c
+OBJS=alias.o cmdls.o cmds.o complete.o init.o interface.o list.o main.o misc.o parsecl.o smbglob.o smbhlp.o str.o transfer.o vars.o
 
 
 CC=cc

@@ -2,7 +2,6 @@
 
 #include "samblah.h"
 
-
 int
 main(int argc, char *argv[])
 {
@@ -13,8 +12,8 @@ main(int argc, char *argv[])
 		    "have an (empty) $HOME/.smb/smb.conf");
 
 	/*
-	 * parse options, read configuration files, et cetera.  if it
-	 * returns, everything went fine, otherwise a message was
+	 * read environment variables, parse options and read configuration
+	 * files.  if it returns, everything went fine, otherwise a message was
 	 * printed and exit called.
 	 */
 	do_init(argc, argv);
@@ -27,5 +26,4 @@ main(int argc, char *argv[])
 	do_interface();
 
 	exit(0);
-	/* NOTREACHED */
 }

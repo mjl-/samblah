@@ -2,10 +2,9 @@
 
 #include "samblah.h"
 
-
 /*
  * IMPORTANT: When changing a command make sure the help/description info in
- * the struct command below is changed accordingly.
+ * the Commands below is changed accordingly.
  */
 
 
@@ -40,11 +39,11 @@ static void     options(const char *);
 
 
 /*
- * Note that two last fields in struct command can contain 11 entries
+ * Note that two last fields in the Command can contain 11 entries
  * and a NULL.  If longer fields are needed, change the size of the
  * fields in cmds.h.
  */
-struct command cmdv[] = {
+Cmd	commands[] = {
     { "cd", cmd_cd, CMD_MUSTCONN,
       "change current remote directory",
       { "cd directory", NULL },
@@ -166,23 +165,25 @@ struct command cmdv[] = {
       { "version", NULL },
       { NULL } }
 };
-int cmdc = sizeof cmdv / sizeof (struct command);
+int	commandcount = nelem(commands);
 
 
 static void
-usage_command(const char *cmd)
+usage_command(const char *name)
 {
-	int i, j;
+	int	i, j;
+	Cmd    *cmd;
 
 	/* find command in list */
-	for (i = 0; i < cmdc; ++i) {
-		if (!streql(cmd, cmdv[i].name))
+	for (i = 0; i < commandcount; ++i) {
+		cmd = &commands[i];
+
+		if (!streql(name, cmd->name))
 			continue;
 
 		/* print the usage lines, with a leading "usage:" once */
-		for (j = 0; cmdv[i].usage[j] != NULL; ++j)
-			printf("%6s %s\n",
-			    (j == 0) ? "usage:" : "", cmdv[i].usage[j]);
+		for (j = 0; cmd->usage[j] != NULL; ++j)
+			printf("%6s %s\n", (j == 0) ? "usage:" : "", cmd->usage[j]);
 		return;
 	}
 }
@@ -196,25 +197,29 @@ usage(void)
 
 
 static void
-options(const char *cmd)
+options(const char *name)
 {
-	int i, j;
+	int	i, j;
+	Cmd    *cmd;
 
 	/* find command in list */
-	for (i = 0; i < cmdc; ++i) {
-		if (!streql(cmd, cmdv[i].name))
+	for (i = 0; i < commandcount; ++i) {
+		cmd = &commands[i];
+
+		if (!streql(name, cmd->name))
 			continue;
 
 		/* print the usage lines, with a leading "options:" once */
-		for (j = 0; cmdv[i].options[j] != NULL; ++j)
-			printf("%8s %s\n",
-			    (j == 0) ? "options:" : "", cmdv[i].options[j]);
+		for (j = 0; cmd->options[j] != NULL; ++j)
+			printf("%8s %s\n", (j == 0) ? "options:" : "", cmd->options[j]);
 		return;
 	}
 }
 
 
-/* Begin of the commands. */
+/*
+ * Begin of the commands.
+ */
 
 static void
 cmd_cd(int argc, char **argv)
@@ -230,7 +235,6 @@ cmd_cd(int argc, char **argv)
 }
 
 
-/* ARGSUSED */
 static void
 cmd_chmod(int argc, char **argv)
 {
@@ -238,15 +242,11 @@ cmd_chmod(int argc, char **argv)
 }
 
 
-/* ARGSUSED */
 static void
 cmd_close(int argc, char **argv)
 {
-	if (argc != 1) {
-		cmdwarnx("wrong number of arguments");
-		usage();
-		return;
-	}
+	if (argc != 1)
+		cmdwarnx("ignoring arguments");
 
 	/* always succeeds */
 	(void)smb_disconnect();
@@ -256,10 +256,10 @@ cmd_close(int argc, char **argv)
 static void
 cmd_get(int argc, char **argv)
 {
-	int ch;
-	int copt = 0, fopt = 0, ropt = 0, sopt = 0;
-	char *oarg = NULL;
-	int exist;
+	int	ch;
+	int	copt = 0, fopt = 0, ropt = 0, sopt = 0;
+	char   *oarg = NULL;
+	int	exist;
 	struct stat st;
 
 	eoptind = 1;
@@ -286,22 +286,21 @@ cmd_get(int argc, char **argv)
 			return;
 		}
 
-	if (argc  - eoptind < 1) {
-		cmdwarnx("wrong number of arguments");
+	argc -= eoptind;
+	argv += eoptind;
+
+	if (argc == 0) {
+		cmdwarnx("at least one argument expected");
 		usage();
 		return;
 	}
 
 	if ((copt && fopt) || (copt && sopt) || (fopt && sopt) ||
-	    (oarg != NULL && argc - eoptind != 1) ||
-	    (ropt && (oarg != NULL))) {
+	    (oarg != NULL && argc != 1) || (ropt && (oarg != NULL))) {
 		cmdwarnx("illegal combination of options");
 		usage();
 		return;
 	}
-
-	argc -= eoptind;
-	argv += eoptind;
 
 	exist = getvariable_onexist("onexist");
 	if (copt) exist = VAR_RESUME;
@@ -309,7 +308,7 @@ cmd_get(int argc, char **argv)
 	if (sopt) exist = VAR_SKIP;
 	/*
 	 * Note that a pointer to exist is passed to transfer_get below so
-	 * that `{overwrite,resume,skip} all' is kept for all arguments in argv
+	 * that `{overwrite,resume,skip} all' is kept for all arguments in argv.
 	 */
 
 	/* if output file has been specified, get the only argument to it */
@@ -351,36 +350,32 @@ cmd_get(int argc, char **argv)
 static void
 cmd_help(int argc, char **argv)
 {
-	int i;
-	struct collist cl;
+	int	i;
+	Cmd    *cmd;
+	List   *list;
 
 	switch (argc) {
 	case 1:
-		/* initialize list */
-		col_initlist(&cl);
-
-		/* add all elements to list, then print and free */
-		for (i = 0; i < cmdc; ++i)
-			if (!col_addlistelem(&cl, cmdv[i].name)) {
-				cmdwarn("adding to buffer");
-				col_freelist(&cl);
-				return;
-			}
-		col_printlist(&cl);
-		col_freelist(&cl);
+		list = list_new();
+		for (i = 0; i < commandcount; ++i)
+			list_add(list, (char *)commands[i].name);
+		printcolumns(list);
+		/* don't free the elements, only the List container */
+		list_free_func(list, NULL); list = NULL;
 		break;
 	case 2:
 		/* find command to give help about */
-		for (i = 0; i < cmdc; ++i) {
-			if (!streql(argv[1], cmdv[i].name))
+		for (i = 0; i < commandcount; ++i) {
+			cmd = &commands[i];
+			if (!streql(argv[1], cmd->name))
 				continue;
 
-			printf("description: %s\n", cmdv[i].descr);
+			printf("description: %s\n", cmd->descr);
 			usage_command(argv[1]);
 			options(argv[1]);
 			break;
 		}
-		if (i == cmdc)
+		if (i == commandcount)
 			cmdwarnx("no such command");
 		break;
 	default:
@@ -404,30 +399,22 @@ cmd_lcd(int argc, char **argv)
 }
 
 
-/* ARGSUSED */
 static void
 cmd_lpwd(int argc, char **argv)
 {
-	char *lcwd;
-	long lcwdsize;
+	char   *lcwd;
+	long	lcwdsize;
 
-	if (argc != 1) {
-		cmdwarnx("wrong number of arguments");
-		usage();
-		return;
-	}
+	if (argc != 1)
+		cmdwarnx("ignoring arguments");
 
 	/* determine maximum possible size for path */
-	if ((lcwdsize = pathconf(".", _PC_PATH_MAX)) == -1)
+	lcwdsize = pathconf(".", _PC_PATH_MAX);
+	if (lcwdsize == -1)
 		lcwdsize = FALLBACK_PATH_MAXLEN;
 
 	/* allocate memory, should be enough to hold longest possible path */
-	lcwd = malloc((size_t)lcwdsize);
-	if (lcwd == NULL) {
-		cmdwarn("cwd buffer");
-		return;
-	}
-
+	lcwd = xmalloc((size_t)lcwdsize);
 	if (getcwd(lcwd, (size_t)lcwdsize) != NULL)
 		printf("%s\n", lcwd);
 	else
@@ -439,9 +426,9 @@ cmd_lpwd(int argc, char **argv)
 static void
 cmd_ls(int argc, char **argv)
 {
-	int ch;
-	int lopt = 0, ropt = 0;
-	char *dotargv[] = { ".", NULL };
+	int	ch;
+	int	lopt = 0, ropt = 0;
+	char   *dotargv[] = { ".", NULL };
 
 	eoptind = 1;
 	eoptreset = 1;  /* clean egetopt state */
@@ -473,8 +460,8 @@ cmd_ls(int argc, char **argv)
 static void
 cmd_lshosts(int argc, char **argv)
 {
-	int ch;
-	int lopt = 0;
+	int	ch;
+	int	lopt = 0;
 
 	eoptind = 1;
 	eoptreset = 1;  /* clean egetopt state */
@@ -491,13 +478,13 @@ cmd_lshosts(int argc, char **argv)
 	argc -= eoptind;
 	argv += eoptind;
 
-	if (argc != 0 && argc != 1) {
+	if (argc > 1) {
 		cmdwarnx("wrong number of arguments");
 		usage();
 		return;
 	}
 
-	/* mind that when argc is 1 then argv[0] is NULL */
+	/* note that when argc is 0 then argv[0] is NULL */
 	smbhlp_list_hosts(argv[0], lopt);
 }
 
@@ -505,11 +492,11 @@ cmd_lshosts(int argc, char **argv)
 static void
 cmd_lsshares(int argc, char **argv)
 {
-	int ch;
-	char *user = NULL;
-	char *pass = NULL;
-	char passinput[SMB_PASS_MAXLEN + 1];
-	int aopt = 0, lopt = 0, Popt = 0;
+	int	ch;
+	char   *user = NULL;
+	char   *pass = NULL;
+	char	passinput[SMB_PASS_MAXLEN + 1];
+	int	aopt = 0, lopt = 0, Popt = 0;
 
 	eoptind = 1;
 	eoptreset = 1;  /* clean egetopt state */
@@ -535,7 +522,10 @@ cmd_lsshares(int argc, char **argv)
 			return;
 		}
 
-	if (argc - eoptind != 1) {
+	argc -= eoptind;
+	argv += eoptind;
+
+	if (argc != 1) {
 		cmdwarnx("wrong number of arguments");
 		usage();
 		return;
@@ -555,23 +545,15 @@ cmd_lsshares(int argc, char **argv)
 			pass = passinput;
 	}
 
-	argc -= eoptind;
-	argv += eoptind;
-
 	smbhlp_list_shares(user, pass, argv[0], aopt, lopt);
 }
 
 
-/* ARGSUSED */
 static void
 cmd_lsworkgroups(int argc, char **argv)
 {
-	if (argc != 1) {
-		cmdwarnx("wrong number of arguments");
-		usage();
-		return;
-	}
-
+	if (argc != 1)
+		cmdwarnx("ignoring arguments");
 	smbhlp_list_workgroups();
 }
 
@@ -579,31 +561,29 @@ cmd_lsworkgroups(int argc, char **argv)
 static void
 cmd_lumask(int argc, char **argv)
 {
-	mode_t modeold = 0;
-	mode_t modetmp = 0;
-	unsigned int inmode;
+	mode_t	curmode;
+	unsigned long	newmode;
 
-	switch (argc) {
-	case 1:
-		/* show current umask */
-		modetmp = umask(modeold), umask(modetmp);
-		modetmp &= S_IRWXU|S_IRWXG|S_IRWXO;
-		printf("%03o\n", (int)modetmp);
-		break;
-	case 2:
+	if (argc != 1 && argc != 2) {
+		cmdwarnx("wrong number of arguments");
+		usage();
+		return;
+	}
+
+	if (argc == 1) {
+		/* show current umask, only user/group/world read/write/execute */
+		curmode = umask(0);
+		printf("%03o\n", (unsigned int)(curmode & (S_IRWXU|S_IRWXG|S_IRWXO)));
+		(void)umask(curmode);
+	} else {
 		/* set new umask */
 		if (strlen(argv[1]) > 3 || strlen(argv[1]) < 1 ||
 		    strlen(argv[1]) != strspn(argv[1], "01234567") ||
-		    sscanf(argv[1], "%o", &inmode) != 1) {
+		    sscanf(argv[1], "%lo", &newmode) != 1) {
 			cmdwarnx("invalid umask");
-			return;
+		} else {
+			umask((mode_t)(newmode & (S_IRWXU|S_IRWXG|S_IRWXO)));
 		}
-
-		umask((mode_t)(inmode&(S_IRWXU|S_IRWXG|S_IRWXO)));
-		break;
-	default:
-		cmdwarnx("wrong number of arguments");
-		usage();
 	}
 }
 
@@ -611,70 +591,63 @@ cmd_lumask(int argc, char **argv)
 static void
 cmd_mkdir(int argc, char **argv)
 {
-	if (argc == 1) {
-		cmdwarnx("wrong number of arguments");
+	eoptind = 1;
+	eoptreset = 1;  /* clean egetopt state */
+	if (egetopt(argc, argv, "") != -1) {
+		cmdwarnx("no options accepted");
+		usage();
+		return;
+	}
+	argc -= eoptind;
+	argv += eoptind;
+
+	if (argc == 0) {
+		cmdwarnx("at least one argument expected");
 		usage();
 		return;
 	}
 
 	/* make all directories, mode is not used */
-	for (++argv; *argv != NULL && !int_signal; ++argv)
+	while (*argv != NULL && !int_signal) {
 		if (smb_mkdir(*argv, (mode_t)0) != 0)
 			cmdwarn("creating %s", *argv);
+		++argv;
+	}
 }
 
 
 static void
 cmd_mv(int argc, char **argv)
 {
-	if (argc <= 2) {
-		cmdwarnx("wrong number of arguments");
+	eoptind = 1;
+	eoptreset = 1;  /* clean egetopt state */
+	if (egetopt(argc, argv, "") != -1) {
+		cmdwarnx("no options accepted");
+		usage();
+		return;
+	}
+	argc -= eoptind;
+	argv += eoptind;
+
+	if (argc < 2) {
+		cmdwarnx("at least two arguments expected");
 		usage();
 		return;
 	}
 
-	/* pass arguments minus program name */
-	smbhlp_move(argc - 1, argv + 1);
+	smbhlp_move(argc, argv);
 }
 
 
 static void
 cmd_open(int argc, char **argv)
 {
-	int ch;
-	int Popt = 0;
-	char passinput[SMB_PASS_MAXLEN + 1];
-	char *host, *share, *user = NULL, *pass = NULL, *path = NULL;
-	struct alias *al;
-	char *errmsg;
-
-	if (argc == 1) {
-		cmdwarnx("wrong number of arguments");
-		usage();
-		return;
-	}
-
-	if (argc == 2) {
-		/* argument is an alias */
-		al = getalias(argv[1]);
-		if (al == NULL) {
-			cmdwarnx("no such alias");
-			return;
-		}
-
-		host = al->host;
-		share = al->share;
-		user = al->user;
-		pass = al->pass;
-		path = al->path;
-
-		errmsg = smb_connect(host, share, user, pass, path);
-		if (errmsg != NULL)
-			cmdwarnx("%s", errmsg);
-		return;
-	}
-
-	/* we will have to use egetopt and read arguments */
+	int	ch;
+	int	Popt = 0;
+	char	passinput[SMB_PASS_MAXLEN + 1];
+	const char     *host, *share, *user = NULL, *pass = NULL, *path = NULL;
+	const char     *errmsg;
+	const Alias    *al;
 
 	eoptind = 1;
 	eoptreset = 1;  /* clean egetopt state */
@@ -694,8 +667,11 @@ cmd_open(int argc, char **argv)
 			return;
 		}
 
-	if (argc - eoptind != 2 && argc - eoptind != 3) {
-		cmdwarnx("host and share expected");
+	argc -= eoptind;
+	argv += eoptind;
+
+	if (argc < 1 || argc > 3) {
+		cmdwarnx("expecting either an alias or a host and share");
 		usage();
 		return;
 	}
@@ -715,12 +691,30 @@ cmd_open(int argc, char **argv)
 			pass = passinput;
 	}
 
-	argc -= eoptind;
-	argv += eoptind;
+	if (argc == 1) {
+		if (pass != NULL || Popt || user != NULL) {
+			cmdwarnx("no options are accepted for an alias");
+			usage();
+			return;
+		}
 
-	host = argv[0];
-	share = argv[1];
-	path = argv[2];         /* argv[2] could be NULL */
+		/* argument is an alias */
+		al = getalias(argv[0]);
+		if (al == NULL) {
+			cmdwarnx("no such alias");
+			return;
+		}
+
+		host = al->host;
+		share = al->share;
+		user = al->user;
+		pass = al->pass;
+		path = al->path;
+	} else {
+		host = argv[0];
+		share = argv[1];
+		path = argv[2];         /* argv[2] could be NULL */
+	}
 
 	/* ready for actual opening of connection */
 	errmsg = smb_connect(host, share, user, pass, path);
@@ -733,14 +727,24 @@ static void
 cmd_page(int argc, char **argv)
 {
 	const char *pager;
-	char *file;
-	char *tmpdir;
-	size_t filelen;
-	char *pagecmd;
-	int fd;
+	char   *file;
+	char   *tmpdir;
+	size_t	filelen;
+	char   *pagecmd;
+	int	fd;
 
-	if (argc != 2) {
-		cmdwarnx("wrong number of arguments");
+	eoptind = 1;
+	eoptreset = 1;  /* clean egetopt state */
+	if (egetopt(argc, argv, "") != -1) {
+		cmdwarnx("no options accepted");
+		usage();
+		return;
+	}
+	argc -= eoptind;
+	argv += eoptind;
+
+	if (argc != 1) {
+		cmdwarnx("exactly one argument expected");
 		usage();
 		return;
 	}
@@ -748,34 +752,25 @@ cmd_page(int argc, char **argv)
 	/* make template, try using $TMPDIR, fall back to /tmp */
 	tmpdir = (getenv("TMPDIR") != NULL) ? getenv("TMPDIR") : "/tmp";
 	filelen = strlen(tmpdir) + strlen("/samblah-XXXXXX");
-	file = malloc(filelen + 1);
-	if (file == NULL) {
-		cmdwarn("mkstemp template");
-		return;
-	}
+	file = xmalloc(filelen + 1);
 	strcpy(file, tmpdir);
 	strcat(file, "/samblah-XXXXXX");
 
-	if ((fd = mkstemp(file)) == -1) {
+	fd = mkstemp(file);
+	if (fd == -1) {
 		cmdwarn("temporary file");
 		free(file);
 		return;
 	}
 
-	if (!transfer_get_fd(argv[1], fd)) {    /* fd will be always closed */
+	if (!transfer_get_fd(argv[0], fd)) {    /* fd will be always closed */
 		(void)unlink(file);
 		free(file);
 		return;         /* error message has already been printed */
 	}
 
 	pager = getvariable_string("pager");
-	pagecmd = malloc(strlen(pager) + 1 + filelen + 1);
-	if (pagecmd == NULL) {
-		cmdwarn("page command");
-		(void)unlink(file);
-		free(file);
-		return;
-	}
+	pagecmd = xmalloc(strlen(pager) + 1 + filelen + 1);
 	strcpy(pagecmd, getvariable_string("pager"));
 	strcat(pagecmd, " ");
 	strcat(pagecmd, file);
@@ -791,10 +786,10 @@ cmd_page(int argc, char **argv)
 static void
 cmd_put(int argc, char **argv)
 {
-	int ch;
-	int copt = 0, fopt = 0, ropt = 0, sopt = 0;
-	char *oarg = NULL;
-	int exist;
+	int	ch;
+	int	copt = 0, fopt = 0, ropt = 0, sopt = 0;
+	char   *oarg = NULL;
+	int	exist;
 	struct stat st;
 
 	eoptind = 1;
@@ -883,33 +878,23 @@ cmd_put(int argc, char **argv)
 }
 
 
-/* ARGSUSED */
 static void
 cmd_pwd(int argc, char **argv)
 {
-	if (argc != 1) {
-		cmdwarnx("wrong number of arguments");
-		usage();
-		return;
-	}
-
+	if (argc != 1)
+		cmdwarnx("ignoring arguments");
 	printf("%s\n", smb_getcwd());
 }
 
 
-/* ARGSUSED */
 static void
 cmd_quit(int argc, char **argv)
 {
-	if (argc != 1) {
-		cmdwarnx("wrong number of arguments");
-		usage();
-		return;
-	}
+	if (argc != 1)
+		cmdwarnx("ignoring arguments");
 
 	if (connected)
-		/* always succeeds */
-		(void)smb_disconnect();
+		(void)smb_disconnect();	/* always succeeds */
 
 	/* tell interface we are done with the command reading */
 	done = 1;
@@ -919,8 +904,8 @@ cmd_quit(int argc, char **argv)
 static void
 cmd_rm(int argc, char **argv)
 {
-	int ch;
-	int ropt = 0;
+	int	ch;
+	int	ropt = 0;
 	
 	eoptind = 1;
 	eoptreset = 1;  /* clean egetopt state */
@@ -934,48 +919,62 @@ cmd_rm(int argc, char **argv)
 			return;
 		}
 
-	if (argc - eoptind < 1) {
-		cmdwarnx("wrong number of arguments");
+	argc -= eoptind;
+	argv += eoptind;
+
+	if (argc == 0) {
+		cmdwarnx("at least one argument expected");
 		usage();
 		return;
 	}
 
-	argc -= eoptind;
-	argv += eoptind;
-
-	for (;*argv != NULL && !int_signal; ++argv)
+	while (*argv != NULL && !int_signal) {
 		smbhlp_remove(*argv, ropt);
+		++argv;
+	}
 }
 
 
 static void
 cmd_rmdir(int argc, char **argv)
 {
-	if (argc == 1) {
-		cmdwarnx("wrong number of arguments");
+	eoptind = 1;
+	eoptreset = 1;  /* clean egetopt state */
+	if (egetopt(argc, argv, "") != -1) {
+		cmdwarnx("no options accepted");
+		usage();
+		return;
+	}
+	argc -= eoptind;
+	argv += eoptind;
+
+	if (argc == 0) {
+		cmdwarnx("at least one argument expected");
 		usage();
 		return;
 	}
 
-	for (++argv; *argv != NULL && !int_signal; ++argv)
+	while (*argv != NULL && !int_signal) {
 		if (smb_rmdir(*argv) != 0)
 			cmdwarn("removing %s", *argv);
+		++argv;
+	}
 }
 
 
 static void
 cmd_set(int argc, char **argv)
 {
-	int i;
-	const char *value;
-	const char *errmsg;
+	int	i;
+	const char     *value;
+	const char     *errmsg;
+	const char    **variables;
 
 	switch (argc) {
 	case 1:
-		/* variablenamec and variablenamev are from vars.c */
-		for (i = 0; i < variablenamec; ++i)
-			printf("%s = %s\n", variablenamev[i],
-			    getvariable(variablenamev[i]));
+		variables = listvariables();
+		for (i = 0; variables[i] != NULL; ++i)
+			printf("%s = %s\n", variables[i], getvariable(variables[i]));
 		break;
 	case 2:
 		value = getvariable(argv[1]);
@@ -997,7 +996,6 @@ cmd_set(int argc, char **argv)
 }
 
 
-/* ARGSUSED */
 static void
 cmd_umask(int argc, char **argv)
 {
@@ -1005,15 +1003,10 @@ cmd_umask(int argc, char **argv)
 }
 
 
-/* ARGSUSED */
 static void
 cmd_version(int argc, char **argv)
 {
-	if (argc != 1) {
-		cmdwarnx("wrong number of arguments");
-		usage();
-		return;
-	}
-
+	if (argc != 1)
+		cmdwarnx("ignoring arguments");
 	printf("samblah %s\n", VERSION);
 }

@@ -1,6 +1,5 @@
 /* $Id$ */
 
-
 extern char *eoptarg;
 extern int eopterr;
 extern int eoptind;

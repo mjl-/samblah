@@ -2,41 +2,40 @@
 
 #include "samblah.h"
 
-
-static const char      *tokenize_generic(const char *, int *, char ***, int *, int, int);
-static void     unquote(char *);
-static char    *unquote_escape(char *);
+static const char      *tokenize_generic(const char *, List *, int *, int, int);
 
 
 /*
- * Tokenizes and unquotes (not escaping special characters) line,
- * tokens are stored in tokenvp and token count in tokencp.
+ * Tokenizes line, tokens are stored in tokens.  Characters special to
+ * fnmatch(3) are not escaped.  On succes NULL is returned, otherwise an error
+ * message is returned.
  */
 const char *
-tokenize(const char *line, int *tokencp, char ***tokenvp)
+tokenize(const char *line, List *tokens)
 {
+	int	i;
 	const char *errmsg;
-	int i;
 
-	/* tokenize, returned tokens are quoted */
-	errmsg = tokenize_generic(line, tokencp, tokenvp, NULL, -1, -1);
+	/* tokenize_generic returns escaped tokens */
+	errmsg = tokenize_generic(line, tokens, NULL, -1, -1);
 	if (errmsg != NULL)
 		return errmsg;
 
-	/* unquote all tokens, not escaping special characters */
-	for (i = 0; i < *tokencp; ++i)
-		unquote((*tokenvp)[i]);
+	/* unescape all tokens */
+	for (i = 0; i < list_count(tokens); ++i)
+		unescape((char *)list_elem(tokens, i));
 
 	return NULL;
 }
 
 
-/* Same as tokenize, but special characters (for fnmatch(3)) are escaped. */
+/*
+ * Same as tokenize, but special characters (for fnmatch(3)) are escaped.
+ */
 const char *
-tokenize_escape(const char *line, int *tokencp, char ***tokenvp)
+tokenize_escape(const char *line, List *tokens)
 {
-	/* same as tokenize_partial_escape but without the partial */
-	return tokenize_partial_escape(line, tokencp, tokenvp, NULL, -1, -1);
+	return tokenize_generic(line, tokens, NULL, -1, -1);
 }
 
 
@@ -46,339 +45,196 @@ tokenize_escape(const char *line, int *tokencp, char ***tokenvp)
  * of a token, the index in the token vector is written to tokenip.
  */
 const char *
-tokenize_partial_escape(const char *line, int *tokencp, char ***tokenvp,
-    int *tokenip, int start, int end)
+tokenize_partial_escape(const char *line, List *tokens, int *tokenip, int start, int end)
 {
-	int i;
-	const char *errmsg;
-
-	/* tokenize, returned tokens are quoted */
-	errmsg = tokenize_generic(line, tokencp, tokenvp, tokenip, start, end);
-	if (errmsg != NULL)
-		return errmsg;
-
-	/* unquote all tokens, escaping special characters */
-	for (i = 0; i < *tokencp; ++i)
-		if (((*tokenvp)[i] = unquote_escape((*tokenvp)[i])) == NULL) {
-			freelist(*tokencp, *tokenvp);
-			return "out of memory";
-		}
-
-	return NULL;
+	return tokenize_generic(line, tokens, tokenip, start, end);
 }
 
 
-
-/* Removes escaping from special characters in token. */
+/*
+ * Removes escaping from special characters in token.
+ */
 void
 unescape(char *token)
 {
-	/*
-	 * look for backslash, remove it and skip escaped character
-	 * so escaped backslashes are not removed
-	 */
-	for (; (token = strchr(token, '\\')) != NULL; ++token)
-		memmove(token, token + 1, strlen(token + 1) + 1);
+	int	from;
+	int	to;
+
+	from = 0;
+	to = 0;
+	while (token[from] != '\0') {
+		/* remove backslash from escaped character */
+		if (token[from] == '\\')
+			++from;
+		token[to++] = token[from++];
+	}
+	token[to] = '\0';
 }
 
 
-/* Quotes possibly escaped token, so it can be placed on the command line. */
+/*
+ * Quotes token if it contains whitespace or special characters.  It frees the
+ * original token and allocates a new one.
+ */
 char *
-quote_escape(char *token)
+quote(char *token)
 {
-	char *ntoken;
-	char *cp;
+	Str    *dest;
+	int	i;
+	char   *result;
 
 	/* without special characters, we do not need te quote */
 	if (strpbrk(token, " \t'*?[]") == NULL)
 		return token;
 
-	/* all quotes need an extra escaping one */
-	cp = token;
-	while ((cp = strchr(cp, '\'')) != NULL) {
-		ntoken = realloc(token, strlen(token) + 2);
-		if (ntoken == NULL) {
-			free(token);
-			return NULL;
-		}
-		/* ntoken != token is possible */
-		cp = ntoken + (cp - token);
-		token = ntoken;
-
-		memmove(cp + 1, cp, strlen(cp) + 1);
-		*cp = '\'';
-		cp += 2;
+	dest = str_new("");
+	str_putchar(dest, '\'');
+	for (i = 0; token[i] != '\0'; ++i) {
+		if (token[i] == '\'')
+			str_putchar(dest, '\'');
+		str_putchar(dest, token[i]);
 	}
+	str_putchar(dest, '\'');
 
-	/* allocate space for extra leading and trailing quote */
-	ntoken = realloc(token, strlen(token) + 3);
-	if (ntoken == NULL) {
-		free(token);
-		return NULL;
-	}
-	token = ntoken;
-
-	/* add quote to begin and end of token */
-	memmove(token + 1, token, strlen(token) + 1);
-	*token = '\'';
-	strcat(token, "'");
-
-	return token;
+	result = str_charptr(dest);
+	free(dest);
+	return result;
 }
 
 
-/* Returns whether the character at index in line is quoted. */
+/*
+ * Called by readline to determine of the character at index is quoted or not.
+ */
 int
 isquoted(char *line, int index)
 {
-	int quoted = 0;
-	char *bp, *cp;
+	int	i;
+	int	inquote;
 
-	/* while there is another `opening' qoute */
-	cp = line;
-	while ((cp = bp = strchr(cp, '\'')) != NULL) {
-		/* starting quote itself is not `quoted' */
-		++bp, ++cp;
-
-		/*
-		 * not quoted when after last ending quote and before current
-		 * beginning quote
-		 */
-		if (line + index < bp) {
-			quoted = 0;
-			break;
+	inquote = 0;
+	i = 0;
+	while (line[i] != '\0') {
+		if (line[i] == '\'') {
+			if (inquote && line[i + 1] == '\'') {
+				if (index == i || index == i + 1)
+					return 1;
+				i += 2;
+			} else {
+				/* starting or ending quote */
+				inquote = !inquote;
+				if (index == i)
+					return 0;
+				++i;
+			}
+		} else {
+			if (index == i)
+				return inquote;
+			++i;
 		}
-
-		/* skip two successive quotes */
-		while ((cp = strchr(cp, '\'')) != NULL && *(cp + 1) == '\'')
-			cp += 2;
-
-		/* quoted when index is between begin and end of quotement */
-		if (cp == NULL || line + index < cp) {
-			quoted = 1;
-			break;
-		}
-		++cp;
 	}
-
-	/*
-	 * TODO fix the quoting so it can be removed, for debugging only
-	fprintf(stderr, "index=%d, char=%c %squoted\n", index, line[index],
-	    quoted ? "" : "not ");
-	 */
-
-	return quoted;
+	return 0;
 }
 
 
 /*
- * Same as tokenize_partial_escape but does not escape special characters
- * (for fnmatch(3)).
+ * Tokenizes line, the result is put in tokens.  When `start' and `end' are not
+ * -1, this function checks of they are the start and end indices of a token.
+ * Special characters inside quotes are escaped.
+ * On succes, NULL is returned, otherwise an error message is returned.
  */
 static const char *
-tokenize_generic(const char *constline, int *tokencp, char ***tokenvp,
-    int *tokenip, int start, int end)
+tokenize_generic(const char *line, List *tokens, int *tokenip,
+			int start, int end)
 {
-	char *line;
-	char *bp, *cp, *tmp;
-	char **tokenv = NULL;
-	int tokenc = 0;
-	char **newv;
-	int stop = 0;
-	int partial = !(start == -1 && end == -1);
-	int quoteadd = 0;
+	int	i;
+	Str    *token;
+	int	inquote, intoken;
+	int	partial;
+	int	tokenstart, tokenend;;
 
-	if (partial) {
-		assert(tokenip != NULL);
+	partial = (start != -1 && end != -1);
+	if (partial)
 		*tokenip = -1;
-	}
 
-	/* make copy of line to work with */
-	line = malloc(strlen(constline) + 2);
-	if (line == NULL)
-		return "out of memory";
-	strcpy(line, constline);
-
-	/* skip leading white space */
-	bp = cp = line + strspn(line, " \t");
-	while (!stop) {
-		/* find next token boundary */
-		if ((tmp = strpbrk(cp, " \t'")) == NULL)
-			tmp = strchr(cp, '\0');
-		cp = tmp;
-
-		/* action based on character at boundary */
-		switch (*cp) {
+	token = str_new("");
+	i = strspn(line, " \t");
+	tokenstart = i;
+	intoken = 1;
+	inquote = 0;
+	while (line[i] != '\0') {
+		switch (line[i]) {
 		case '\'':
-			/* find ending quote */
+			if (!intoken)
+				tokenstart = i;
+			intoken = 1;
 
-			++cp;
-
-			/* skip quoted quotes */
-			while ((cp = strchr(cp, '\'')) != NULL &&
-			    *(cp + 1) == '\'')
-				cp += 2;
-
-			if (cp == NULL) {
-				/* missing end quote */
-
-				if (partial) {
-					/* add quote and move to end of line */
-					strcat(line, "'");
-					cp = line + strlen(line);
-					quoteadd = 1;
-				} else {
-					freelist(tokenc, tokenv);
-					free(line);
-					return "unbalanced quote";
-				}
-			} else
-				++cp;   /* continue after end of quote */
+			if (inquote && line[i + 1] == '\'') {
+				str_putchar(token, '\'');
+				i += 2;
+			} else {
+				inquote = !inquote;
+				++i;
+			}
 			break;
-		case '\0':
 		case ' ':
 		case '\t':
-			/* end of token and possibly of line found */
-
-			/*
-			 * space for extra token, possible extra token for
-			 * completion and trailing NULL
-			 */
-			newv = realloc(tokenv, sizeof (char *) * (tokenc + 3));
-			if (newv == NULL) {
-				freelist(tokenc, tokenv);
-				free(line);
-				return "out of memory";
-			}
-			tokenv = newv;
-
-			/* add copy of token */
-			tokenv[tokenc] = malloc((size_t)(cp - bp + 1));
-			if (tokenv[tokenc] == NULL) {
-				freelist(tokenc, tokenv);
-				free(line);
-				return "out of memory";
-			}
-			strncpy(tokenv[tokenc], bp, (size_t)(cp - bp));
-			tokenv[tokenc][cp - bp] = '\0';
-			++tokenc;
-
-			/* check if the start/end denote a token */
-			if (partial && bp - line == start &&
-			    cp - line - (quoteadd ? 1 : 0) == end)
-				*tokenip = tokenc - 1;
-
-			cp = bp = cp + strspn(cp, " \t");
-
-			/*
-			 * add empty token when at end of line and being
-			 * partial
-			 */
-			if (partial && cp != line && *cp == '\0' &&
-			    start == end && cp - line == start) {
-				tokenv[tokenc] = malloc(1);
-				if (tokenv[tokenc] == NULL) {
-					freelist(tokenc, tokenv);
-					free(line);
-					return "out of memory";
-				}
-				*tokenv[*tokenip = tokenc++] = '\0';
+			if (!intoken) {
+				/* whitespace between tokens, skip it */
+				++i;
+				break;
 			}
 
-			/* terminate list when at end of line */
-			if (*cp == '\0') {
-				tokenv[tokenc] = NULL;
-				stop = 1;
+			/* whitespace inside quoted token or token boundary */
+			if (inquote) {
+				str_putchar(token, line[i]);
+				++i;
+			} else {
+				tokenend = i;
+				list_add(tokens, str_charptr(token));
+				free(token);
+				token = str_new("");
+				intoken = 0;
+				++i;
 			}
 			break;
+		default:
+			if (!intoken)
+				tokenstart = i;
+			intoken = 1;
+
+			if (inquote && strchr("\\?*[]", line[i]) != NULL)
+				str_putchar(token, '\\');
+			str_putchar(token, line[i]);
+			++i;
 		}
 	}
 
-	free(line);
+	/* it is likely we were processing a token when we encountered the NUL */
+	if (intoken) {
+		if (inquote && !partial) {
+			return "unbalanced quotes";
+		} else {
+			/* the ending quote may be missing, pretend it is there */
+			tokenend = i;
+			list_add(tokens, str_charptr(token));
+			free(token); token = NULL;
+		}
+	} else {
+		str_free(token); token = NULL;
+	}
 
-	*tokenvp = tokenv;
-	*tokencp = tokenc;
+	/* check if the start/end denote a token */
+	if (partial && tokenstart == start && tokenend == end)
+		*tokenip = list_count(tokens) - 1;
+
+	/*
+	 * add empty token when at end of line and being partial.
+	 * when start == 0, the case above would have added an empty token.
+	 */
+	if (partial && start == end && start != 0) {
+		list_add(tokens, xstrdup(""));
+		*tokenip = list_count(tokens) - 1;
+	}
 
 	return NULL;
-}
-
-
-/* Removes quoting from token, special characters are not escaped. */
-static void
-unquote(char *token)
-{
-	char *cp = token;
-
-	/* look for next opening quote */
-	while ((cp = strchr(cp, '\'')) != NULL) {
-		/* remove starting quote */
-		memmove(cp, cp + 1, strlen(cp + 1) + 1);
-
-		/* keep one of two successive quotes */
-		while ((cp = strchr(cp, '\'')) != NULL && *(cp + 1) == '\'') {
-			memmove(cp, cp + 1, strlen(cp + 1) + 1);
-			++cp;
-		}
-
-		/* assume token has correct quotes */
-		assert(cp != NULL);
-
-		/* remove ending quote */
-		memmove(cp, cp + 1, strlen(cp + 1) + 1);
-	}
-}
-
-
-/*
- * Same as unquote, but special characters are quoted, value returned
- * is new token, the argument is freed, caller must free result.
- */
-static char *
-unquote_escape(char *token)
-{
-	char *tmp;
-	char *cp = token;
-
-	/* look for next opening quote */
-	while ((cp = strchr(cp, '\'')) != NULL) {
-		/* remove starting quote */
-		memmove(cp, cp + 1, strlen(cp + 1) + 1);
-
-		for (;;) {
-			/* assuming token has at least ending quote */
-			assert((cp = strpbrk(cp, "'\\?*[]")) != NULL);
-
-			if (*cp == '\'' && *(cp + 1) == '\'') {
-				/* keep one of two successive quotes */
-				memmove(cp, cp + 1, strlen(cp + 1) + 1);
-				++cp;
-			} else if (*cp == '\'') {
-				/* ending quote */
-				break;
-			} else {
-				/* escape special character */
-
-				/* reallocate for extra backslash */
-				tmp = realloc(token, strlen(token) + 2);
-				if (tmp  == NULL) {
-					free(token);
-					return NULL;
-				}
-				/* tmp != token is possible */
-				cp = tmp + (cp - token);
-				token = tmp;
-
-				/* move elements to right, insert backslash */
-				memmove(cp + 1, cp, strlen(cp) + 1);
-				*cp = '\\';
-
-				cp += 2;
-			}
-		}
-
-		/* remove ending quote */
-		memmove(cp, cp + 1, strlen(cp + 1) + 1);
-	}
-
-	return token;
 }

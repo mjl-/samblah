@@ -2,349 +2,303 @@
 
 #include "samblah.h"
 
-/*
- * Used by cmdls_list, primarily to easily sort files based on name and status
- * information.
- */
-struct namest {
-	char *name;             /* name of file/directory */
-	struct stat st;         /* file information */
+typedef struct Dentinfo Dentinfo;
+
+struct Dentinfo {
+	char   *name;		/* name of file/directory */
+	struct	stat st;	/* file information */
 };
 
 
-static void     cmdls_listdir(char *, int, int);
-static int      isdir(const char *);
-static int      listdir(char *, int *, char ***);
-static int      statlist(char *, char **, int *, struct namest **, int *);
+static void     listdir(const char *, int, int);
+static int	filecount(List *);
+static List    *statdir(const char *);
+static List    *statlist(int, char **);
+static void	dentinfo_free(void *);
 static int      filecmp(const void *, const void *);
 static int      namecmp(const void *, const void *);
-static void     printlist(int, struct namest *, int);
+static void     printls(int, List *, int);
 
 
-/* A ls(1)-like command.  lopt is for -l, ropt for -r. */
+/*
+ * Helper function for the internal ls command.  Argv contains the files to be
+ * listed, starting at index 0.  There are argc elements.  Lopt indicates if -l
+ * was specified on the command line, thus if size/last modification time/etc
+ * should be printed.  Ropt is for -r, recursive listing.
+ *
+ * Files (as opposed to directories) specified on the command line can simply
+ * be printed.  Directories require some special handling.  If exactly one
+ * directory (and no files) was given on the command line, print the contents
+ * of that directory without a leading "directory:\n".  If multiple arguments
+ * were given, print the files first, then for each directory, print
+ * "directory:\n" and then the contents of the directory.
+ */
 void
 cmdls_list(int argc, char **argv, int lopt, int ropt)
 {
-	int namestc;
-	struct namest *namestv;
-	int filec;
-	int i;
+	int	i;
+	List   *entries;
+	struct stat st;
+	Dentinfo   *entry;
 
-	if (argc == 1 && isdir(*argv)) {
-		cmdls_listdir(*argv, lopt, ropt);
+	if (argc == 1 && (smb_stat(argv[0], &st) == 0 && S_ISDIR(st.st_mode))) {
+		/* exactly one argument specified which is a directory */
+		listdir(argv[0], lopt, ropt);
 		return;
 	}
-
-	if (!statlist(NULL, argv, &namestc, &namestv, &filec))
-		return;         /* statlist printed message on error */
-
-	/* put files first, than print them */
-	qsort(namestv, (size_t)namestc, sizeof (struct namest), filecmp);
-	printlist(filec, namestv, lopt);
-
-	/* list the directories */
-	for (i = filec; !int_signal && i != namestc; ++i) {
-		printf("%s%s:\n", (i == 0) ? "" : "\n", namestv[i].name);
-		cmdls_listdir(namestv[i].name, lopt, ropt);
-	}
-
-	free(namestv);
-}
-
-
-/* Lists contents of directory dir.  lopt is for -l, ropt for -r. */
-static void
-cmdls_listdir(char *dir, int lopt, int ropt)
-{
-	int namec;
-	char **namev;
-	int namestc;
-	struct namest *namestv;
-	int filec;
-	char buf[SMB_PATH_MAXLEN + 1];
-	int bufleft;
-	char *bufoff;
-	char *rdir;
-	int i;
-
-	if ((bufleft = SMB_PATH_MAXLEN - (strlen(dir) + 1)) > 0) {
-		strcpy(buf, dir);
-		strcat(buf, "/");
-		bufoff = buf + (SMB_PATH_MAXLEN - bufleft);
-	} else {
-		errno = ENAMETOOLONG;
-		cmdwarn("in %s", dir);
-		return;
-	}
-
-	/* read directory, namev is NULL on error or no entries */
-	if (!listdir(dir, &namec, &namev))
-		return;         /* listdir printed message on error */
 
 	/*
-	 * determine whether entries (entries namev in directory dir) are
-	 * directories or files and how many of them are files
+	 * one single file or multiple arguments specified.  retrieve
+	 * information on all elements, sort them (files first, then
+	 * directories and then on name), and print the files only.
 	 */
-	if (!statlist(dir, namev, &namestc, &namestv, &filec)) {
-		freelist(namec, namev);
-		return;         /* statlist printed message on error */
-	}
+	entries = statlist(argc, argv);
+	list_sort(entries, filecmp);
+	printls(filecount(entries), entries, lopt);
 
-	/* sort all entries by name and print all of them */
-	qsort(namestv, (size_t)namestc, sizeof (struct namest), namecmp);
-	printlist(namestc, namestv, lopt);
+	/* print the directories */
+	for (i = filecount(entries); !int_signal && i < list_count(entries); ++i) {
+		entry = (Dentinfo *)list_elem(entries, i);
+
+		/* no leading newline if nothing has been printed yet */
+		printf("%s%s:\n", (i == 0) ? "" : "\n", entry->name);
+		listdir(entry->name, lopt, ropt);
+	}
+	list_free_func(entries, dentinfo_free);
+}
+
+/*
+ * Print contents of directory.  Lopt and ropt indicate if -l or -r was
+ * specified on the command line.
+ *
+ * First all contents of the directory are listed, both files and directories.
+ * Then, if ropt was specified, recurse in the directories.
+ */
+static void
+listdir(const char *directory, int lopt, int ropt)
+{
+	List   *entries;
+	Str    *newdir;
+	int	i;
+	Dentinfo *entry;
+
+	/*
+	 * retrieve information about all entries in the directory, sort them
+	 * on name, then print all elements
+	 */
+	entries = statdir(directory);
+	if (entries == NULL)
+		return;
+	list_sort(entries, namecmp);
+	printls(list_count(entries), entries, lopt);
 
 	if (!ropt) {
-		/* not listing recursively, nothing more to do */
-		freelist(namec, namev);
-		free(namestv);
+		/* no recursion, we are done */
+		list_free(entries);
 		return;
 	}
 
-	/*
-	 * list directories recursively, so sort namestv so that
-	 * files are in front.  since we already determined how
-	 * many files there were (namely filec), we can easily walk
-	 * through the directories, listing each of them
-	 */
-	qsort(namestv, (size_t)namestc, sizeof (struct namest), filecmp);
+	/* sort again, now files first, then directories */
+	list_sort(entries, filecmp);
 
-	/* list the directories, we start where the directories begin */
-	for (i = filec; !int_signal && i != namestc; ++i) {
-		rdir = namestv[i].name;
-		if (strlen(rdir) > bufleft) {
-			errno = ENAMETOOLONG;
-			cmdwarn("in %s", dir);
-			continue;
-		}
+	/* skip the files, only list all directories */
+	for (i = filecount(entries); !int_signal && i < list_count(entries); ++i) {
+		entry = (Dentinfo *)list_elem(entries, i);
 
-		strcpy(bufoff, rdir);
-		rdir = buf;
+		newdir = str_new(directory);
+		str_putcharptr(newdir, "/");
+		str_putcharptr(newdir, entry->name);
 
-		printf("\n%s:\n", rdir);
-		cmdls_listdir(rdir, lopt, ropt);
+		printf("\n%s:\n", str_charptr(newdir));
+		listdir(str_charptr(newdir), lopt, ropt);
+		str_free(newdir); newdir = NULL;
 	}
-
-	freelist(namec, namev);
-	free(namestv);
-}
-
-
-/* Returns whether path is a directory. */
-static int
-isdir(const char *path)
-{
-	struct stat st;
-
-	if (int_signal)
-		return 0;
-
-	return smb_stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+	list_free_func(entries, dentinfo_free);
 }
 
 
 /*
- * Retrieves list of files in directory dir, entries will be put
- * in namev, number of entries in namec.  Returns whether the operation
- * was successful.  On error, namev will not contain allocated memory.
+ * Determine the number of files (as opposed to directories) in the list.
  */
 static int
-listdir(char *dir, int *namec, char ***namev)
+filecount(List *entries)
 {
-	const struct smb_dirent *dent;
-	char **newv;
-	int dh = -1;
+	int	i, count;
+	Dentinfo *entry;
 
-	*namec = 0;
-	*namev = NULL;
+	count = 0;
+	for (i = 0; i < list_count(entries); ++i) {
+		entry = (Dentinfo *)list_elem(entries, i);
+		if (!S_ISDIR(entry->st.st_mode))
+			++count;
+	}
+	return count;
+}
 
-	if (int_signal || (dh = smb_opendir(dir)) < 0)
-		goto listdirerror;
+
+/*
+ * Retrieve contents of directory.  On error, NULL is returned.  On success, a
+ * list of Dentinfo's is returned (which should be freed by the caller).
+ */
+static List *
+statdir(const char *directory)
+{
+	int	dh;
+	List   *entries;
+	Str    *file;
+	Dentinfo  *entry;
+	Smbdirent *dent;
+	
+	if (int_signal)
+		return NULL;
+
+	dh = smb_opendir(directory);
+	if (dh < 0)
+		return NULL;
+
+	entries = list_new();
 
 	while (!int_signal && (dent = smb_readdir(dh)) != NULL) {
 		if (streql(dent->name, ".") || streql(dent->name, ".."))
 			continue;
 
-		newv = realloc(*namev, sizeof (char *) * (*namec + 2));
-		if (newv == NULL)
-			goto listdirerror;
-		*namev = newv;
+		entry = xmalloc(sizeof (Dentinfo));
+		entry->name = xstrdup(dent->name);
 
-		/* save copy of entry name */
-		if (((*namev)[*namec] = strdup(dent->name)) == NULL)
-			goto listdirerror;
-		++*namec;
+		file = str_new(directory);
+		str_putcharptr(file, "/");
+		str_putcharptr(file, entry->name);
+
+		if (smb_stat(str_charptr(file), &entry->st) != 0) {
+			cmdwarn("%s", entry->name);
+			dentinfo_free(entry);
+			str_free(file); file = NULL;
+			continue;
+		}
+		str_free(file); file = NULL;
+		list_add(entries, entry);
 	}
 
-	if (int_signal || (dh = smb_closedir(dh)) != 0)
-		goto listdirerror;
-
-	if (*namev != NULL)
-		(*namev)[*namec] = NULL;
-
-	return (*namec == 0) ? 0 : 1;
-
-listdirerror:
-	if (!int_signal) {
-		cmdwarn("%s", dir);
-		if (dh >= 0)
-			(void)smb_closedir(dh);
+	if (int_signal) {
+		list_free_func(entries, dentinfo_free);
+		(void)smb_closedir(dh);
+		return NULL;
 	}
 
-	while (*namec > 0)
-		free((*namev)[--*namec]);
-	free(*namev);
+	if (smb_closedir(dh) != 0) {
+		cmdwarn("%s", directory);
+		list_free_func(entries, dentinfo_free);
+		return NULL;
+	}
 
-	*namev = NULL;
-	*namec = 0;
-
-	return 0;
+	return entries;
 }
 
 
 /*
- * Calls smb_stat on the filenames in namev, prefixed with path
- * when it is not NULL.  Results are stored in argnamestc and argnamestv.
- * The number of files (as opposed to directories) in namev will be
- * stored in argfilec.  Returns whether the operation was successful.
- * Note that the pointers in namev will end up in argnamestv.  On
- * error, argnamestv will not contain allocated memory, but namev
- * will NOT be touched.
+ * Retrieve information about all files/directories in argv (starting at index
+ * 0, with argc elements).  This function always succeeds returning a list of
+ * Dentinfo's which must be freed by the caller.  For files in argv for which
+ * smb_stat() returns an error (e.g. because they do not exist), an error
+ * message is printed and the file is ignored.
  */
-static int
-statlist(char *path, char **namev, int *argnamestc, struct namest **argnamestv,
-    int *argfilec)
+static List *
+statlist(int argc, char **argv)
 {
-	struct stat st;
-	struct namest *namestv = NULL;
-	int namestc = 0;
-	struct namest *newv;
-	int filec = 0;
-	char buf[SMB_PATH_MAXLEN + 1];
-	int bufleft = 0;
-	char *bufoff = NULL;
+	int	i;
+	List   *entries;
+	Dentinfo *entry;
 
-	if (path != NULL) {
-		if ((bufleft = SMB_PATH_MAXLEN - (strlen(path) + 1)) > 0) {
-			strcpy(buf, path);
-			strcat(buf, "/");
-			bufoff = buf + (SMB_PATH_MAXLEN - bufleft);
-		} else {
-			errno = ENAMETOOLONG;
-			cmdwarn("in %s", path);
-			return 0;
-		}
-	}
-
-	while (*namev != NULL) {
-		/* finish creating path to stat */
-		if (path != NULL && (bufleft < strlen(*namev))) {
-			errno = ENAMETOOLONG;
-			cmdwarn("in %s", path);
-			++namev;
+	entries = list_new();
+	for (i = 0; !int_signal && i < argc; ++i) {
+		entry = xmalloc(sizeof (Dentinfo));
+		entry->name = xstrdup(argv[i]);
+		if (smb_stat(argv[i], &entry->st) != 0) {
+			cmdwarn("%s", argv[i]);
+			dentinfo_free(entry);
 			continue;
 		}
-		if (path != NULL)
-			strcpy(bufoff, *namev);
-
-		/* silently return when interrupted */
-		if (int_signal) {
-			free(namestv); namestv = NULL;
-			
-			*argnamestc = 0;
-			*argnamestv = NULL;
-			*argfilec = 0;
-
-			return 0;
-		}
-
-		if (smb_stat((path == NULL) ? *namev : buf, &st) != 0) {
-			cmdwarn("%s", *namev++);
-			continue;
-		}
-
-		newv = realloc(namestv,
-		    sizeof (struct namest) * (namestc + 2));
-		if (newv == NULL) {
-			cmdwarn("directory entries buffer");
-			free(namestv); namestv = NULL;
-			
-			*argnamestc = 0;
-			*argnamestv = NULL;
-			*argfilec = 0;
-
-			return 0;
-		}
-		namestv = newv;
-
-		namestv[namestc].name = *namev++;
-		memcpy(&namestv[namestc].st, &st, sizeof (struct stat));
-		if (!S_ISDIR(namestv[namestc].st.st_mode))
-			++filec;
-		++namestc;
+		list_add(entries, entry);
 	}
 
-	*argfilec = filec;
-	*argnamestc = namestc;
-	*argnamestv = namestv;
-	return 1;
+	return entries;
+}
+
+
+static void
+dentinfo_free(void *p)
+{
+	Dentinfo *entry;
+
+	entry = (Dentinfo *)p;
+	free(entry->name);
+	free(entry);
 }
 
 
 /*
- * Compare two `files' (struct namest), for qsort.  Files are
- * `smaller' than directories.  When both are files or both are
- * directories, strings are compared using strcmp.
+ * Compare two Dentinfo's, for use with qsort.  Files come before
+ * directories.  When both elements are files or both are directories, they are
+ * compared by name.
  */
 static int
 filecmp(const void *arg1, const void *arg2)
 {
-	const struct namest *nst1 = (const struct namest *)arg1;
-	const struct namest *nst2 = (const struct namest *)arg2;
+	const Dentinfo *di1 = *(const Dentinfo **)arg1;
+	const Dentinfo *di2 = *(const Dentinfo **)arg2;
 
-	if (!S_ISDIR(nst1->st.st_mode) && S_ISDIR(nst2->st.st_mode))
+	if (!S_ISDIR(di1->st.st_mode) && S_ISDIR(di2->st.st_mode))
 		return -1;
-	if (S_ISDIR(nst1->st.st_mode) && !S_ISDIR(nst2->st.st_mode))
+	if (S_ISDIR(di1->st.st_mode) && !S_ISDIR(di2->st.st_mode))
 		return 1;
-	return strcmp(nst1->name, nst2->name);
-}
-
-
-static int
-namecmp(const void *arg1, const void *arg2)
-{
-	const struct namest *nst1 = (const struct namest *)arg1;
-	const struct namest *nst2 = (const struct namest *)arg2;
-
-	return strcmp(nst1->name, nst2->name);
+	return strcmp(di1->name, di2->name);
 }
 
 
 /*
- * Prints the nsc number of elements in nsv.  lopt is for -l for
- * whether or not to print extra information.
+ * Compare two Dentinfo's by name.
+ */
+static int
+namecmp(const void *arg1, const void *arg2)
+{
+	const Dentinfo *di1 = *(const Dentinfo **)arg1;
+	const Dentinfo *di2 = *(const Dentinfo **)arg2;
+	
+	return strcmp(di1->name, di2->name);
+}
+
+
+/*
+ * Prints the first count in files.  lopt indicates if last modification time
+ * and filesize should be printed.  If lopt is false, the files are printed in
+ * columns.
  */
 static void
-printlist(int nsc, struct namest *nsv, int lopt)
+printls(int count, List *entries, int lopt)
 {
-	struct collist col;
+	int	i;
+	List   *tmp;
+	Dentinfo   *entry;
+	const char *datestr;
+	const char *trailing;
 
 	if (lopt) {
-		for (; nsc-- != 0; ++nsv)
-			printf("%s %10lld %s%s\n",
-			    makedatestr(nsv->st.st_mtime),
-			    (long long)nsv->st.st_size, nsv->name,
-			    (S_ISDIR(nsv->st.st_mode) ? "/" : ""));
-		return;
-	}
+		for (i = 0; i < count; ++i) {
+			entry = (Dentinfo *)list_elem(entries, i);
+			datestr = makedatestr(entry->st.st_mtime);
+			trailing = S_ISDIR(entry->st.st_mode) ? "/" : "";
 
-	col_initlist(&col);
-	while (nsc--)
-		if (!col_addlistelem(&col, (nsv++)->name)) {
-			cmdwarn("adding entry to buffer");
-			col_freelist(&col);
-			return;
+			printf("%s %10lld %s%s\n", datestr,
+				(long long)entry->st.st_size, entry->name, trailing);
 		}
-	col_printlist(&col);
-	col_freelist(&col);
+	} else {
+		tmp = list_new();
+		for (i = 0; i < count; ++i) {
+			entry = (Dentinfo *)list_elem(entries, i);
+			list_add(tmp, entry->name);
+		}
+		printcolumns(tmp);
+		/* don't free the elements, only the List container */
+		list_free_func(tmp, NULL); tmp = NULL;
+	}
 }

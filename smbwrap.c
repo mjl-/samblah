@@ -16,13 +16,14 @@
 
 #include <libsmbclient.h>
 
+#include "list.h"
 #include "smbwrap.h"
 
 #define streql(s1, s2)  (strcmp(s1, s2) == 0)
 
 
 /* Non-zero if connected to a share, not connected by default. */
-int connected = 0;
+int	connected = 0;
 
 
 /*
@@ -44,8 +45,8 @@ static char list_user[SMB_USER_MAXLEN + 1];
 static char list_pass[SMB_PASS_MAXLEN + 1];
 
 
-static int      listuri(const char *, int *, struct smb_dirent **);
-static void     smbc_dirent2smb_dirent(const struct smbc_dirent *from, struct smb_dirent *to);
+static int      listuri(const char *, List *);
+static void     smbc_dirent2Smbdirent(const struct smbc_dirent *from, Smbdirent *to);
 static void     auth_callback(const char *, const char *, char *, int, char *, int, char *, int);
 static void     makeuri(char *);
 static void     makecwduri(char *);
@@ -125,7 +126,7 @@ smb_connect(const char *host, const char *share, const char *user,
 
 
 /*
- * Disconnects.  Always succeeds since libsmbclient has no idea of
+ * Disconnects.  Always succeeds since libsmbclient has no interface for
  * opening and closing connections, that is all handled internally.
  */
 int
@@ -356,21 +357,21 @@ smb_opendir(const char *path)
 
 /*
  * Reads next file/directory for dh.  On failure or end of list
- * NULL is returned, otherwise a pointer to a smb_dirent is returned.
+ * NULL is returned, otherwise a pointer to a Smbdirent is returned.
  * Note that it is not possible to detect difference between failure
  * and end of directory.
  */
-const struct smb_dirent *
+Smbdirent *
 smb_readdir(int dh)
 {
-	static struct smb_dirent dent;
+	static Smbdirent dent;
 	const struct smbc_dirent *cdent;
 
 	/* TODO check why smbc_readdir has unsigned int for directory handle */
 	cdent = smbc_readdir((unsigned int)dh);
 	if (cdent == NULL)
 		return NULL;
-	smbc_dirent2smb_dirent(cdent, &dent);
+	smbc_dirent2Smbdirent(cdent, &dent);
 	return &dent;
 }
 
@@ -409,22 +410,22 @@ smb_closedir(int dh)
 
 
 const char *
-smb_workgroups(int *argc, struct smb_dirent **argv)
+smb_workgroups(List *list)
 {
-	int r;
+	int	r;
 
-	switch (r = listuri("smb://", argc, argv)) {
-	case 0:         return NULL;
-	default:        return strerror(r);
+	switch (r = listuri("smb://", list)) {
+	case 0:		return NULL;
+	default:	return strerror(r);
 	}
 }
 
 
 const char *
-smb_hosts(const char *workgroup, int *argc, struct smb_dirent **argv)
+smb_hosts(const char *workgroup, List *list)
 {
-	char uribuf[SMB_URI_MAXLEN + 1];
-	int r;
+	char	uribuf[SMB_URI_MAXLEN + 1];
+	int	r;
 
 	if (workgroup != NULL && !validworkgroup(workgroup))
 		return "Invalid arguments";
@@ -438,8 +439,8 @@ smb_hosts(const char *workgroup, int *argc, struct smb_dirent **argv)
 	if (workgroup != NULL)
 		strcat(uribuf, workgroup);
 
-	switch (r = listuri(uribuf, argc, argv)) {
-	case 0:         return NULL;
+	switch (r = listuri(uribuf, list)) {
+	case 0:		return NULL;
 	case ENODEV:    return "No such workgroup";
 	case ENOENT:    return "No such workgroup";
 	default:        return strerror(r);
@@ -448,11 +449,10 @@ smb_hosts(const char *workgroup, int *argc, struct smb_dirent **argv)
 
 
 const char *
-smb_shares(const char *user, const char *pass, const char *host,
-    int *argc, struct smb_dirent **argv)
+smb_shares(const char *user, const char *pass, const char *host, List *list)
 {
-	char uribuf[SMB_URI_MAXLEN + 1];
-	int r;
+	char	uribuf[SMB_URI_MAXLEN + 1];
+	int	r;
 
 	/* check if user, pass and host are valid */
 	if ((user == NULL && pass != NULL) ||
@@ -476,14 +476,13 @@ smb_shares(const char *user, const char *pass, const char *host,
 	strcpy(list_user, (user != NULL) ? user : "");
 	strcpy(list_pass, (pass != NULL) ? pass : "");
 
-	switch (r = listuri(uribuf, argc, argv)) {
-	case 0:         return NULL;
+	switch (r = listuri(uribuf, list)) {
+	case 0:		return NULL;
 	case ENODEV:    return "No such host";
 	case ENOENT:    return "No such host";
 	default:        return strerror(r);
 	}
 }
-
 
 
 /*
@@ -493,18 +492,16 @@ smb_shares(const char *user, const char *pass, const char *host,
  * succeeds, on failure all allocated memory is freed automatically.
  */
 static int
-listuri(const char *uri, int *argc, struct smb_dirent **argv)
+listuri(const char *uri, List *list)
 {
-	int dh;
+	int	dh;
+	Smbdirent      *dirent;
 	const struct smbc_dirent *dent;
-	void *tmp;
-	int save_errno;
 
-	*argc = 0;
-	*argv = NULL;
 	doing_listing = 1;
 
-	if ((dh = smbc_opendir(uri)) < 0)
+	dh = smbc_opendir(uri);
+	if (dh < 0)
 		goto error;
 
 	while ((dent = smbc_readdir(dh)) != NULL) {
@@ -512,16 +509,11 @@ listuri(const char *uri, int *argc, struct smb_dirent **argv)
 		if (streql(dent->name, ".") || streql(dent->name, ".."))
 			continue;
 
-		tmp = realloc(*argv, sizeof (struct smb_dirent) * (*argc + 1));
-		if (tmp == NULL) {
-			save_errno = errno;
-			(void)smbc_closedir(dh);
-			errno = save_errno;
+		dirent = malloc(sizeof (Smbdirent));
+		if (dirent == NULL)
 			goto error;
-		}
-		*argv = (struct smb_dirent *)tmp;
-		smbc_dirent2smb_dirent(dent, *argv + *argc);
-		++*argc;
+		smbc_dirent2Smbdirent(dent, dirent);
+		list_add(list, dirent);
 	}
 
 	if (smbc_closedir(dh) != 0)
@@ -531,8 +523,7 @@ listuri(const char *uri, int *argc, struct smb_dirent **argv)
 	return 0;
 
 error:
-	free(*argv); *argv = NULL;
-	*argc = 0;
+	list_free(list); list = NULL;
 
 	/* TODO remove this when libsmbclient is fixed */
 	if (errno == 0)
@@ -545,7 +536,7 @@ error:
 
 
 static void
-smbc_dirent2smb_dirent(const struct smbc_dirent *from, struct smb_dirent *to)
+smbc_dirent2Smbdirent(const struct smbc_dirent *from, Smbdirent *to)
 {
 	assert(strlen(from->name) < sizeof to->name);
 	assert(strlen(from->comment) < sizeof to->comment);

@@ -2,11 +2,10 @@
 
 #include "samblah.h"
 
-
-int done = 0;           /* when true, program should stop */
-const char *cmdname = "samblah";        /* contains running command */
-volatile sig_atomic_t int_signal = 0;   /* set to true on SIGINT */
-volatile sig_atomic_t winch_signal = 0; /* set to true on SIGWINCH */
+int	done = 0;			/* when true, samblah will quit */
+const char *cmdname = "samblah";	/* contains running command */
+volatile sig_atomic_t int_signal = 0;	/* set to true on SIGINT */
+volatile sig_atomic_t winch_signal = 0;	/* set to true on SIGWINCH */
 
 
 static int cols = -1;   /* width of screen */
@@ -14,14 +13,15 @@ static int lines;       /* unused, needed for setting cols */
 
 
 static void     do_line(void);
-static void     do_command(int *, char ***);
+static void     do_command(List *);
 static void     int_handler(int);
 static void     winch_handler(int);
 
 
 /*
  * Starts the command reading and executing loop.  When `quit' is executed or
- * on EOF it returns.  On error it prints a message and exits.
+ * on EOF it returns (variable `done' will be true).  On error it prints a
+ * message and exits.
  */
 void
 do_interface(void)
@@ -56,14 +56,18 @@ do_interface(void)
 	(void)rl_set_signals();
 
 	/*
-	 * TODO get readline to determine tokens when ending quote
-	 * is missing or when current position is not end of line
-	 * i.e. find magic combination to get desired effect
+	 * TODO get readline to determine tokens when ending quote is missing
+	 * or when current position is not end of line i.e. find magic
+	 * combination to get desired effect
 	 */
 
-	/* for our own completion and displaying, needed for our quoting */
+	/*
+	 * for our own completion and displaying, needed for our quoting.
+	 * these are defined in complete.c
+	 */
 	rl_attempted_completion_function = complete;
 	rl_completion_display_matches_hook = displaymatches;
+
 	rl_char_is_quoted_p = isquoted;
 	rl_basic_word_break_characters = " \t";
 	rl_basic_quote_characters = "";
@@ -84,17 +88,17 @@ do_interface(void)
 static void
 do_line(void)
 {
-	char **tokenv = NULL;
-	int tokenc = 0;
-	char *line;
+	char   *line;
+	List   *tokens;
 	const char *prompt = "samblah> ";
 	const char *errmsg;
 
-	/* cleanup from previous command */
+	/* possibly cleanup from previous command */
 	int_signal = 0;
 
 	/* read input, stop on EOF */
-	if ((line = readline(prompt)) == NULL) {
+	line = readline(prompt);
+	if (line == NULL) {
 		done = 1;
 		return;
 	}
@@ -103,84 +107,100 @@ do_line(void)
 	if (strspn(line, " \t") == strlen(line))
 		return;
 
+	/*
+	 * at least the line is non-empty, it may still have an invalid command
+	 * or incorrect quoting
+	 */
 	add_history(line);
 
-	/* see if it is a shell command, ! */
-	if (*line == '!') {
-		(void)system(line + 1);
+	/* see if it is a shell command, i.e. when it starts with `!' */
+	if (line[0] == '!') {
+		(void)system(&line[1]);
 		free(line);
 		return;
 	}
 
-	/* tokenize, escaping special characters */
-	errmsg = tokenize_escape(line, &tokenc, &tokenv);
+	/*
+	 * tokenize, characters special to fnmatch(3) are escaped.  these
+	 * tokens aren't ready yet to give to the internal commands,
+	 * do_command() will call smbglob() which will replace patterns with
+	 * matches.
+	 */
+	tokens = list_new();
+	errmsg = tokenize_escape(line, tokens);
 	if (errmsg != NULL) {
 		cmdwarnx("%s", errmsg);
 	} else {
-		/* assume line is not empty after all */
-		assert(tokenc != 0 && *tokenv != NULL);
+		/* assume line is not empty after all (yes, we already checked it wasn't) */
+		assert(list_count(tokens) != 0);
 
 		/* execute tokens */
-		do_command(&tokenc, &tokenv);
+		do_command(tokens);
 	}
 
-	freelist(tokenc, tokenv);
-	free(line);
+	list_free(tokens); tokens = NULL;
+	free(line); line = NULL;
 }
 
 
 /* When no command could be found a message is printed. */
 static void
-do_command(int *tokencp, char ***tokenvp)
+do_command(List *tokens)
 {
-	int i;
+	int	i;
+	int	remoteglobbing;
+	Cmd    *cmd;
+	int	argc;
+	char  **argv;
 
 	/* find struct command to execute */
-	for (i = 0;; ++i) {
-		if (i == cmdc) {
-			cmdwarnx("no such command");
-			return;
-		}
-		if (streql(**tokenvp, cmdv[i].name))
+	i = 0;
+	for (i = 0; i < commandcount; ++i) {
+		cmd = &commands[i];
+		if (streql((char *)list_elem(tokens, 0), cmd->name))
 			break;
+	}
+	if (i == commandcount) {
+		cmdwarnx("no such command");
+		return;
 	}
 
 	/* determine if our connected status is correct for this command */
-	if (cmdv[i].conn == CMD_MUSTCONN && !connected) {
+	if (cmd->conn == CMD_MUSTCONN && !connected) {
 		cmdwarnx("not connected");
 		return;
 	}
-	if (cmdv[i].conn == CMD_MUSTNOTCONN && connected) {
+	if (cmd->conn == CMD_MUSTNOTCONN && connected) {
 		cmdwarnx("already connected");
 		return;
 	}
 
-	/*
-	 * perform globbing, smbglob inserts tokens in vector and modifies
-	 * count, last argument denotes if local or remote globbing should be
-	 * done
-	 */
-	switch (smbglob(tokencp, tokenvp,
-	    cmdv[i].conn == CMD_MUSTCONN && !streql(**tokenvp, "put"))) {
-	case GLB_NOMEM:
-		cmdwarn("globbing");
-		return;
+	/* perform globbing, either on remote or on local files */
+	remoteglobbing = cmd->conn == CMD_MUSTCONN && !streql((char *)list_elem(tokens, 0), "put");
+	switch (smbglob(tokens, remoteglobbing)) {
 	case GLB_DIRERR:
 		cmdwarn("handling directories in globbing");
 		return;
 	case GLB_INTR:
+		/* return silently, the user deliberately caused the interrupt */
 		return;
 	}
 
-	cmdname = cmdv[i].name;
-	(*(cmdv[i].func))(*tokencp, *tokenvp);
+	argc = list_count(tokens);
+	argv = (char **)list_elems(tokens);
+
+	/* cmdname is used by the warning/error printing functions used by the commands */
+	cmdname = cmd->name;
+	(*(cmd->func))(argc, argv);
 	cmdname = "samblah";
 
 	return;
 }
 
 
-/* Returns current width of the terminal. */
+/*
+ * Return the current width of the terminal.
+ */
 int
 term_width(void)
 {
@@ -201,9 +221,9 @@ term_width(void)
 int
 askpass(char pass[SMB_PASS_MAXLEN + 1])
 {
-	int c;
+	int	c;
+	char	buf[SMB_PASS_MAXLEN + 2];     /* +2 because an extra newline is read */
 	struct termios tp;
-	char buf[SMB_PASS_MAXLEN + 2];     /* needed for extra newline read */
 
 	/* fill tp */
 	if (tcgetattr(STDIN_FILENO, &tp) != 0)

@@ -1,6 +1,5 @@
 /* $Id$ */
 
-
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -26,26 +25,35 @@
 #include <readline/readline.h>
 
 #include "egetopt.h"
+#include "str.h"
+#include "list.h"
 #include "smbwrap.h"
 
 
 #define VERSION                  "0.0"
-#define SAMBLAHRC_LINE_MAXLEN     1024    /* max len of line in samblahrc */
-#define ALIAS_MAXLEN                64    /* max len of an alias */
-#define VAR_STRING_MAXLEN          512	  /* max len of a string variable */
 #define DEFAULT_PAGER           "less"
-#define FALLBACK_PATH_MAXLEN      1024    /* to use when pathconf fails */
-#define RESUME_ROLLBACK           8192    /* bytes to retransfer of file */
+
+enum {
+	SAMBLAHRC_LINE_MAXLEN   = 1024,   /* max length of line in samblahrc */
+	ALIAS_MAXLEN            =   64,   /* max length of an alias */
+	VAR_STRING_MAXLEN       =  512,   /* max length of a string variable */
+	FALLBACK_PATH_MAXLEN    = 1024,   /* to use when pathconf fails */
+	RESUME_ROLLBACK         = 8192    /* bytes to retransfer of file */
+};
 
 #define streql(s1, s2)  (strcmp(s1, s2) == 0)
+#define nelem(p)	(sizeof p / sizeof p[0])
 
 
 /* miscellaneous functions, misc.c */
-void    freelist(int, char **);
-char   *strdup(const char *);
+void    printcolumns(List *);
 int     qstrcmp(const void *, const void *);
 int     xsnprintf(char *, size_t, const char *, ...);
 const char     *makedatestr(time_t);
+
+void   *xmalloc(size_t);
+void   *xrealloc(void *, size_t);
+char   *xstrdup(const char *);
 
 void    err(int, const char *, ...);
 void    errx(int, const char *, ...);
@@ -61,18 +69,18 @@ void    cmdwarnx(const char *, ...);
 /* variables, vars.c */
 enum    { VAR_ASK, VAR_RESUME, VAR_OVERWRITE, VAR_SKIP };
 
-extern const char *variablenamev[];
-extern int variablenamec;
-
+const char    **listvariables(void);
 const char     *setvariable(const char *, const char *);
-char           *getvariable(const char *);
-int             getvariable_bool(const char *);
-int             getvariable_onexist(const char *);
-char           *getvariable_string(const char *);
+char   *getvariable(const char *);
+int	getvariable_bool(const char *);
+int	getvariable_onexist(const char *);
+char   *getvariable_string(const char *);
 
 
 /* aliases, alias.c */
-struct alias {
+typedef struct Alias Alias;
+
+struct Alias {
 	char alias[ALIAS_MAXLEN + 1];
 	char user[SMB_USER_MAXLEN + 1];
 	char pass[SMB_PASS_MAXLEN + 1];
@@ -82,7 +90,7 @@ struct alias {
 };
 
 const char     *setalias(const char *, const char *, const char *, const char *, const char *, const char *);
-struct alias   *getalias(const char *);
+const Alias    *getalias(const char *);
 
 
 /* initialization, init.c */
@@ -90,10 +98,12 @@ void do_init(int, char **);
 
 
 /* ls command, interactive, cmdls.c */
-void cmdls_list(int , char **, int, int);
+void cmdls_list(int, char **, int, int);
 
 
 /* commands, cmds.c */
+typedef struct Cmd Cmd;
+
 enum connection_prereq {
 	CMD_MAYCONN,            /* may be connected */
 	CMD_MUSTCONN,           /* must be connected */
@@ -104,7 +114,7 @@ enum connection_prereq {
  * Note that usage and options can contain 11 lines (and a NULL), make sure
  * the struct command in cmds.c fits.
  */
-struct command {
+struct Cmd {
 	const char *name;               /* command as typed on prompt */
 	void (*func)(int, char **);    /* cmd_ function */
 	enum connection_prereq conn;    /* if connection is needed */
@@ -113,8 +123,8 @@ struct command {
 	const char *options[12];        /* option information */
 };
 
-extern struct command cmdv[];
-extern int cmdc;
+extern Cmd	commands[];
+extern int	commandcount;
 
 
 /* generating and displaying matches, complete.c  */
@@ -133,47 +143,30 @@ extern volatile sig_atomic_t int_signal;
 
 
 /* command/.samblahrc line parse functions, parsecl.c */
-const char     *tokenize(const char *, int *, char ***);
-const char     *tokenize_escape(const char *, int *, char ***);
-const char     *tokenize_partial_escape(const char *, int *, char ***, int *, int, int);
+const char     *tokenize(const char *, List *);
+const char     *tokenize_escape(const char *, List *);
+const char     *tokenize_partial_escape(const char *, List *, int *, int, int);
 void            unescape(char *);
-char           *quote_escape(char *);
+char           *quote(char *);
 int             isquoted(char *, int);
 
 
-/* print columnized output, pcols.c */
-struct collist {
-	int width;              /* length of largest element in elems */
-	char **elemv;           /* element vector */
-	int elemc;             /* element count */
-};
-
-void    col_initlist(struct collist *);
-int     col_addlistelem(struct collist *, const char *);
-void    col_printlist(struct collist *);
-void    col_freelist(struct collist *);
-
-
-enum file_location {
-	LOC_LOCAL,              /* local file */
-	LOC_REMOTE              /* remote file */
-};
-
 /* Error/success codes, return values of smbglob. */
 #define GLB_OK           0      /* no problems */
-#define GLB_NOMEM       -1      /* out of memory */
-#define GLB_DIRERR      -2      /* error opening/reading/closing directory */
-#define GLB_INTR        -3      /* interrupted */
+#define GLB_DIRERR      -1      /* error opening/reading/closing directory */
+#define GLB_INTR        -2      /* interrupted */
 
-int     smbglob(int *, char ***, int);
-int     tokenmatch(char *, char *, int *, char ***, enum file_location);
+int     smbglob(List *, int);
+int     tokenmatch(const char *, List *, int);
 
 
+/* transfer data from/to smb files or file descriptors, transfer.c */
 void    transfer_get(const char *, const char *, int *, int);
 int     transfer_get_fd(const char *, int);
 void    transfer_put(const char *, const char *, int *, int);
 
 
+/* help functions doing much of the actual work for the internal commands, smbhlp.c */
 void    smbhlp_list_hosts(const char *, int);
 void    smbhlp_list_shares(const char *, const char *, const char *, int, int);
 void    smbhlp_list_workgroups(void);

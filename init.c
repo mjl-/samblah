@@ -2,11 +2,10 @@
 
 #include "samblah.h"
 
-
 static void             usage(void);
 static void             parse_config(const char *file, int use_file);
-static const char      *config_set_cmd(int, char * const *);
-static const char      *config_alias_cmd(int, char * const *);
+static const char      *config_set_cmd(List *);
+static const char      *config_alias_cmd(List *);
 
 
 /*
@@ -16,15 +15,15 @@ static const char      *config_alias_cmd(int, char * const *);
 void
 do_init(int argc, char **argv)
 {
-	int ch;
-	int Popt = 0;
-	char *carg, *user, *pass, *host, *share, *path;
-	char samblahrc[FALLBACK_PATH_MAXLEN + 1];
-	int use_samblahrc = 0;
-	char *homedir;
-	char passinput[SMB_PASS_MAXLEN + 1];
-	struct alias *al;
-	const char *errmsg;
+	int	ch;
+	int	Popt = 0;
+	const char     *carg, *user, *pass, *host, *share, *path;
+	char	samblahrc[FALLBACK_PATH_MAXLEN + 1];
+	int	use_samblahrc = 0;
+	char   *homedir;
+	char	passinput[SMB_PASS_MAXLEN + 1];
+	const Alias    *al;
+	const char     *errmsg;
 
 	if (getenv("PAGER") != NULL) {
 		errmsg = setvariable("pager", getenv("PAGER"));
@@ -75,8 +74,10 @@ do_init(int argc, char **argv)
 	}
 
 	/*
-	 * try reading config files in following order: on command
-	 * line with -c, from $SAMBLAHRC, from $HOME/.samblahrc
+	 * try reading config files in following order:
+	 * 1. on command line with -c
+	 * 2. from $SAMBLAHRC
+	 * 3. from $HOME/.samblahrc
 	 */
 	if (carg != NULL) {
 		if (xsnprintf(samblahrc, sizeof samblahrc,
@@ -93,7 +94,8 @@ do_init(int argc, char **argv)
 		}
 		use_samblahrc = 1;
 	} else {
-		if ((homedir = getenv("HOME")) != NULL) {
+		homedir = getenv("HOME");
+		if (homedir != NULL) {
 			/* construct config path */
 			if (xsnprintf(samblahrc, sizeof samblahrc, "%s%s",
 			    homedir, "/.samblahrc") >= sizeof samblahrc) {
@@ -151,12 +153,11 @@ usage(void)
 static void
 parse_config(const char *file, int use_file)
 {
-	FILE *in;
-	char buf[SAMBLAHRC_LINE_MAXLEN + 2];    /* `+ 2' for \n and \0 */
-	char *cp;
-	int linenum;
-	char **tokenv;
-	int tokenc;
+	FILE   *in;
+	char	buf[SAMBLAHRC_LINE_MAXLEN + 2];    /* `+ 2' for \n and \0 */
+	char   *cp;
+	int	linenum;
+	List   *tokens;
 	const char *errmsg;
 
 	if ((in = fopen(file, "r")) == NULL) {
@@ -165,11 +166,8 @@ parse_config(const char *file, int use_file)
 		return;
 	}
 
-	tokenv = NULL;
-	tokenc = 0;
 	/* read, parse and execute lines */
 	for (linenum = 1; fgets(buf, sizeof buf, in) != NULL; ++linenum) {
-
 		/*
 		 * check if line is valid.  with NUL in input, this may
 		 * falsely print an error or stop processing after NUL.
@@ -185,27 +183,23 @@ parse_config(const char *file, int use_file)
 
 		/* empty line or comment */
 		if (*(buf + strspn(buf, " \t")) == '\0' ||
-		    *(buf + strspn(buf, " \t")) == '#') {
-			tokenv = NULL;
-			tokenc = 0;
+		    *(buf + strspn(buf, " \t")) == '#')
 			continue;
-		}
 
-		errmsg = tokenize(buf, &tokenc, &tokenv);
+		tokens = list_new();
+		errmsg = tokenize(buf, tokens);
 		if (errmsg != NULL) {
 			(void)fclose(in);
 			errx(1, "tokenizing line: %s", errmsg);
 		}
 
 		errmsg = "unknown command";
-		if (tokenc >= 1 && streql(tokenv[0], "set"))
-			errmsg = config_set_cmd(tokenc, tokenv);
-		else if (tokenc >= 1 && streql(tokenv[0], "alias"))
-			errmsg = config_alias_cmd(tokenc, tokenv);
+		if (list_count(tokens) >= 1 && streql((char *)list_elem(tokens, 0), "set"))
+			errmsg = config_set_cmd(tokens);
+		else if (list_count(tokens) >= 1 && streql((char *)list_elem(tokens, 0), "alias"))
+			errmsg = config_alias_cmd(tokens);
 
-		freelist(tokenc, tokenv);
-		tokenv = NULL;
-		tokenc = 0;
+		list_free(tokens); tokens = NULL;
 
 		if (errmsg != NULL) {
 			(void)fclose(in);
@@ -225,8 +219,14 @@ parse_config(const char *file, int use_file)
 
 
 static const char *
-config_set_cmd(int argc, char * const *argv)
+config_set_cmd(List *tokens)
 {
+	int	argc;
+	char  **argv;
+
+	argc = list_count(tokens);
+	argv = (char **)list_elems(tokens);
+
 	if (argc != 3)
 		return "wrong number of arguments";
 
@@ -235,11 +235,16 @@ config_set_cmd(int argc, char * const *argv)
 
 
 static const char *
-config_alias_cmd(int argc, char * const *argv)
+config_alias_cmd(List *tokens)
 {
 	const char *user, *pass;
 	const char *alias, *host, *share, *path;
-	int ch;
+	int	ch;
+	int	argc;
+	char  **argv;
+
+	argc = list_count(tokens);
+	argv = (char **)list_elems(tokens);
 
 	if (argc < 4)
 		return "wrong number of arguments";
@@ -265,7 +270,7 @@ config_alias_cmd(int argc, char * const *argv)
 	argv += eoptind;
 
 	/* still need host, share and possibly path */
-	if (!(argc == 2 || argc == 3))
+	if (argc != 2 && argc != 3)
 		return "wrong number of arguments";
 
 	host = argv[0];
