@@ -1,0 +1,9 @@
+Bugs:
+- Find out why smbc_stat seemingly randomly returns errors when
+  connecting to e.g. bondgirl 'pinkpop 2001'.
+- Chdir's to some directories succeed when the directories do not
+  exist.  Which ones?
+- Fix transfers of files >2GB.
+
+
+$Id$

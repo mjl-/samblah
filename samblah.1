@@ -1,0 +1,266 @@
+.\" $Id$
+.Dd March 23, 2003
+.Dt samblah 1
+.Os samblah
+.Sh NAME
+.Nm samblah
+.Nd command-line SMB/CIFS file transfer client
+.Sh SYNOPSIS
+.Nm
+.Op Fl c Ar file
+.Op Ar alias
+.Pp
+.Nm
+.Op Fl c Ar file
+.Op Fl P | Fl p Ar pass
+.Op Fl u Ar user
+.Ar host Ar share Op Ar path
+.Sh DESCRIPTION
+.Nm Samblah
+is a command-line SMB/CIFS file transfer client, its functionality
+resembles that of
+.Xr smbclient 1
+which is part of the Samba project.
+.Nm Samblah
+provides certain features that
+.Xr smbclient 1
+lacks, such as command-line completion, convenient globbing and
+resuming of transfers.
+.Ss Features
+Command-line completion allows for completion of commands and,
+depending on the command, local or remote files.
+.Pp
+Extensive and completely configurable command-line editing is
+provided by the readline library, see
+.Xr readline 3
+for information on how to configure its behaviour.
+.Pp
+Globbing is provided for both local and remote files, i.e. patterns
+containing
+.Ql "*" ,
+.Ql "?" 
+or
+.Ql "[...]"
+are replaced with the files they match, matching is done by
+.Xr fnmatch 3 .
+Note that globbing is done in a generic manner, not inside each
+internal command but directly after parsing the command-line, this
+causes it to work as expected for all commands.
+.Pp
+Other interesting features include recursive file transfers and
+listings, resuming of transfers, an nice quoting mechanism and more.
+.Ss Options
+.Bl -tag -width Fl
+.It Fl c Ar file
+Read configuration from
+.Ar file .
+.It Fl p Ar pass
+Use
+.Ar pass
+for authentication.  May not be used with
+.Fl P .
+.It Fl P
+Prompt the user for a password used for authentication, input will
+not echo.  May not be used with
+.Fl p Ar pass .
+.It Fl u Ar user
+Use
+.Ar user
+for authentication.
+.El
+.Ss Interactive commands
+The following commands are understood:
+.Ic cd ,
+.Ic chmod ,
+.Ic close ,
+.Ic get ,
+.Ic help ,
+.Ic lcd ,
+.Ic lpwd ,
+.Ic ls ,
+.Ic lshosts ,
+.Ic lsshares ,
+.Ic lsworkgroups ,
+.Ic lumask ,
+.Ic mkdir ,
+.Ic mv ,
+.Ic open ,
+.Ic page ,
+.Ic put ,
+.Ic pwd ,
+.Ic quit ,
+.Ic rm ,
+.Ic rmdir ,
+.Ic set ,
+.Ic umask ,
+.Ic version
+.Pp
+Most of these commands resemble familiar shell commands.  Execute
+.Ic help Ar command
+for a description of the command.
+.Ss Quoting
+A simple quoting mechanism allows for executing commands with
+arguments containing special characters, currently spaces and tabs.
+The quoting character is the single quote: '.
+An argument can consist of multiple quoted parts, a quoted part can
+start and end anywhere in an argument.
+A literal single quote can only be inserted by escaping the quote
+with an extra single quote, this can only be done inside a quoted
+part.
+Since this mechanism is a bit different from that of the average
+shell, a few examples might be helpful:
+.Pp
+.Dl "samblah> get 'file with spaces in it.txt'"
+.Dl "samblah> get 'file with a quote in it: ''.txt'
+.Dl "samblah> get a_quoted_part' can start and end 'anywhere.txt
+.Dl "samblah> get ''''"
+.Pp
+The last example shows how to specify an argument containing only a
+single quote.
+.Ss Variables
+.Nm Samblah
+has variables much like environment variables, below follows a
+description.
+The default values can be overridden in the configuration file and
+by the command
+.Ic set .
+.Bl -ohang
+.It Va "onexist"
+.Bl -tag -offset 4n -width "description" -compact
+.It default
+ask
+.It values
+ask, resume, overwrite, skip
+.It description
+Specifies what to do when the destination file already exists.
+.El
+.It Va pager
+.Bl -tag -offset 4n -width "description" -compact
+.It default
+less
+.It values
+any string
+.It description
+Specifies the program to use to display the contents of a file.
+When set, the environment variable
+.Ev PAGER
+is used as the default value.
+.El
+.It Va showprogress
+.Bl -tag -offset 4n -width "description" -compact
+.It default
+yes
+.It values
+yes, no
+.It description
+Specifies whether or not to show progress during a transfer.
+When
+.Sq yes ,
+the following information is updated every second: a progress bar,
+the estimated time of arrival and the current size of the file on
+the destination side.
+.El
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width "SAMBLAHRC"
+.It Ev PAGER
+Used as the default value for the internal variable
+.Sq pager .
+.It Ev SAMBLAHRC
+Contains the location of the configuration file to read on start-up.
+If it is not set, a default value of
+.Pa $HOME/.samblahrc
+is assumed.
+.El
+.Sh FILES
+.Pa $HOME/.samblahrc
+is read on start-up.
+This location can be overridden by
+.Ev SAMBLAHRC
+which can be overridden by the argument to
+.Fl c .
+.Pp
+A configuration file can contain three types of lines: comments,
+variable assignments and alias definitions.
+Note that
+.Nm
+will exit when the file contains invalid lines.
+.Pp
+The rules for comments are mostly the usual: empty lines are ignored
+as are lines of which the first non-white space character is a
+.Sq # .
+In a non-comment line, the contents after a
+.Sq #
+are
+.Em not
+recognized as comment and thus will
+.Em not
+be ignored.
+Non-comment lines are parsed (i.e. have the same quoting mechanism)
+in the exact same manner as the interactive commands.
+.Pp
+Syntax of the alias definitions:
+.Dl alias Ao alias Ac Ns \& Ao definition Ac
+.Pp
+Where
+.Aq definition
+has the same syntax as the arguments to the interactive command
+.Ic open ,
+except that it cannot be another alias.  A line might
+look like this:
+.Dl "alias newalias -u myuser -p mypass myhost myshare mypath"
+.Pp
+The variable assignments have the exact same syntax as the interactive
+command
+.Ic set .
+For example:
+.Dl "set pager more"
+.Sh SEE ALSO
+.Xr smbclient 1 ,
+.Xr fnmatch 3 ,
+.Xr readline 3 .
+.Pp
+.Bl -item -compact
+.It
+The
+.Nm
+website, <http://samblah.sourceforge.net/>.
+.It
+The Samba project website, <http://www.samba.org/>.
+.El
+.Sh AUTHORS
+Mechiel Lukkien, <mechiel@ueber.net>.
+.Sh BUGS
+.Ic umask
+and
+.Ic chmod
+are not implemented since libsmbclient currently does not
+support those operations.
+.Pp
+.Ic lsworkgroup
+and
+.Ic lshosts
+are broken, this could be due to a bug in libsmbclient.
+.Pp
+.Nm Samblah
+has limited control over the remote file operations provided by
+libsmbclient.
+For example timeouts cannot be set and the file operations do not
+stop immediately on an interrupt.
+.Pp
+Files larger than 4GB will show as much smaller files and
+cannot be transferred correctly.
+.Pp
+In a shell, opening
+.Pa nonexistent/../existent
+correctly fails to open
+.Pa existent
+because
+.Pa nonexistent
+does not exist.
+In 
+.Nm samblah
+this operation succeeds since libsmbclient internally works with
+URI's whose semantics allow one to remove
+.Pa nonexistent/..
+before opening.
