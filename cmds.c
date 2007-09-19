@@ -667,8 +667,8 @@ cmd_open(int argc, char **argv)
 	argc -= eoptind;
 	argv += eoptind;
 
-	if (argc == 1) {
-		cmdwarnx("need a share too");
+	if (argc <= 1) {
+		cmdwarnx("need hostname and share");
 		usage();
 		return;
 	}
