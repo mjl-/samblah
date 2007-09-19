@@ -94,7 +94,7 @@ listdir(const char *directory, int lopt, int ropt)
 
 	if (!ropt) {
 		/* no recursion, we are done */
-		list_free(entries);
+		list_free_func(entries, dentinfo_free);
 		return;
 	}
 

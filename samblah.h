@@ -1,5 +1,9 @@
 /* $Id$ */
 
+#define _FILE_OFFSET_BITS 64	/* sigh, for gnu libc */
+#define _BSD_SOURCE
+#define _XOPEN_SOURCE 600
+
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
