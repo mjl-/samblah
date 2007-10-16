@@ -10,7 +10,7 @@
 .Op Fl c Ar file
 .Op Fl P | Fl p Ar pass
 .Op Fl u Ar user
-.Ar host Ar share Op Ar path
+.Op Ar host Ar share Op Ar path
 .Sh DESCRIPTION
 .Nm Samblah
 is a command-line SMB/CIFS file transfer client, its functionality
@@ -44,7 +44,7 @@ internal command but directly after parsing the command-line, this
 causes it to work as expected for all commands.
 .Pp
 Other interesting features include recursive file transfers and
-listings, resuming of transfers, an nice quoting mechanism and more.
+listings, resuming of transfers, a nice quoting mechanism and more.
 .Ss Options
 .Bl -tag -width Fl
 .It Fl c Ar file
@@ -89,11 +89,14 @@ The following commands are understood:
 .Ic rmdir ,
 .Ic set ,
 .Ic umask ,
-.Ic version
+.Ic version .
 .Pp
 Most of these commands resemble familiar shell commands.  Execute
 .Ic help Ar command
-for a description of the command.
+for a description of the command.  Commands starting with a ! are executed
+using the shell.  For example,
+.Ic !pwd
+will print the current working directory.
 .Ss Quoting
 A simple quoting mechanism allows for executing commands with
 arguments containing special characters, currently spaces and tabs.

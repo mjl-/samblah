@@ -34,7 +34,7 @@
 #include "smbwrap.h"
 
 
-#define VERSION                  "0.0"
+#define VERSION                  "3"
 #define DEFAULT_PAGER           "less"
 
 enum {

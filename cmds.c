@@ -989,5 +989,5 @@ cmd_version(int argc, char **argv)
 {
 	if (argc != 1)
 		cmdwarnx("ignoring arguments");
-	printf("samblah %s\n", VERSION);
+	printf("samblah-%s\n", VERSION);
 }
