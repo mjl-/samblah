@@ -1,80 +1,116 @@
-ABOUT SAMBLAH
-====================
+# status
 
-Samblah is a command-line SMB/CIFS file transfer client, its
+this software was written a long time ago and may not compile
+immediately.  contact me if you need help.  it can be made to run
+on at least openbsd & linux.
+
+
+# about
+
+samblah is a command-line smb/cifs file transfer client, its
 functionality resembles that of smbclient(1) which is part of the
-Samba project. Samblah provides certain features that smbclient(1)
+samba project.  samblah provides certain features that smbclient(1)
 lacks, such as command-line completion, convenient globbing and
 resuming of transfers.
 
 
-FEATURES
-====================
+# features
 
-Command-line completion allows for completion of commands and,
-depending on the command, local or remote files.
-
-Extensive and completely configurable command-line editing is
-provided by the readline library, see readline(3) for information
-on how to configure its behaviour.
-
-Globbing is provided for both local and remote files, i.e. patterns
-containing `*', `?' or `[...]' are replaced with the files they
-match, matching is done by fnmatch(3). Note that globbing is done
-in a generic manner, not inside each internal command but directly
-after parsing the command-line, this causes it to work as expected
-for all commands.
-
-Other interesting features include recursive file transfers and
-listings, resuming of transfers, a nice quoting mechanism and more.
+- command-line completion allows for completion of commands and,
+  depending on the command, local or remote files.
+- extensive and completely configurable command-line editing is
+  provided by the readline library, see readline(3) for information
+  on how to configure its behaviour.
+- globbing is provided for both local and remote files, i.e. patterns
+  containing `*', `?' or `[...]' are replaced with the files they
+  match, matching is done by fnmatch(3).  note that globbing is done
+  in a generic manner, not inside each internal command but directly
+  after parsing the command-line, this causes it to work as expected
+  for all commands.
+- other interesting features include recursive file transfers and
+  listings, resuming of transfers, a nice quoting mechanism and more.
 
 
-INSTALLING
-====================
+# screenshots
 
-Samblah needs libreadline and libsmbclient.  Chances are that
+progressbar
+	while transferring, the progress bar, current size and
+	estimated time of arrival are updated once every second.
+
+	http://www.xs4all.nl/~mechiel/projects/samblah/screenshots/progressbar.png
+
+recursive `get'
+	samblah can retrieve directories recursively.
+
+	http://www.xs4all.nl/~mechiel/projects/samblah/screenshots/recursive.png
+
+resuming a transfer
+	when a the destination file of a transfer already exists,
+	the user is asked whether to overwrite, resume, or skip the
+	transfer.
+
+	http://www.xs4all.nl/~mechiel/projects/samblah/screenshots/resume.png
+
+completion
+	as can be seen in the screenshot, completion is quite useful
+	when navigating.
+
+	http://www.xs4all.nl/~mechiel/projects/samblah/screenshots/completion.png
+
+globbing
+	you can use the wildcards `*', `?' and `[characters]' to
+	match file names.
+
+	http://www.xs4all.nl/~mechiel/projects/samblah/screenshots/globbing.png
+
+
+# installing
+
+samblah needs libreadline and libsmbclient.  chances are that
 libreadline is already installed on your system, if not, you can
 find it at <http://cnswww.cns.cwru.edu/~chet/readline/rltop.html>.
-As libreadline is pretty mainstream, installing it should not cause
+as libreadline is pretty mainstream, installing it should not cause
 much trouble.
 
-Libsmbclient is a bit harder.  It comes as part of samba,
-<http://www.samba.org/>.  At the moment of writing, samba-2.2.8 is
-the latest release.  The problem is that the Makefile does not build
-and install libsmbclient correctly.  See if your operating
+libsmbclient is a bit harder.  It comes as part of samba,
+<http://www.samba.org/>.  at the moment of writing, samba-2.2.8 is
+the latest release.  the problem is that the Makefile does not build
+and install libsmbclient correctly.  see if your operating
 system/distribution has a libsmbclient package, that will be the
-easiest.  Otherwise, try modifying the Makefile of samba to suit
+easiest.  otherwise, try modifying the Makefile of samba to suit
 your needs.
 
-When you have libreadline and libsmbclient, it is time to compile
-samblah.  Edit the Makefile and add the location of the libreadline
-and libsmbclient header files to the include path.  Then execute
+when you have libreadline and libsmbclient, it is time to compile
+samblah.  edit the Makefile and add the location of the libreadline
+and libsmbclient header files to the include path.  then execute
 `make'.  If this succeeds, there will be a binary `samblah' and a
-formatted manual page `samblah.0'.  To install samblah, copy the
+formatted manual page `samblah.0'.  to install samblah, copy the
 binary to somewhere in your path (you might want to strip(1) it
 first) and copy the manual page (either samblah.1, the raw manual
 page, or samblah.0, the formatted manual page, possibly compressed)
-to where your systems keeps manual pages.  Note that there is no
+to where your systems keeps manual pages.  note that there is no
 `install' target since there is no way of determining where to
 install the files.
 
 
-LICENSE
-====================
+# download
 
-All files in samblah distributions are in the public domain.  This
+note that this software is unmaintained, so don't expect many
+updates.  still, changes can be found here:
+
+	http://www.ueber.net/code/r/samblah
+
+
+# author & licence
+
+this code was written by Mechiel Lukkien <mechiel@xs4all.nl> or
+<mechiel@ueber.net>.
+
+all files in samblah distributions are in the public domain.  this
 means you can do anything with it you want.
 
 
-AUTHOR
-====================
+# thanks
 
-Written by Mechiel Lukkien <mechiel@xs4all.nl> or <mechiel@ueber.net>.
-Feedback is welcome, such as bug reports, bug fixes (in code and
-text).  See also <http://www.xs4all.nl/~mechiel/projects/samblah/>.
-
-Helpful people who have provided feedback/bug reports/bug fixes and
+helpful people who have provided feedback/bug reports/bug fixes and
 suggestions for improvements:  Ferdi Meijerink, Berteun Damman.
-
-
-$Id$
